@@ -185,6 +185,25 @@ def test_inversion_rescue(clean, tmp_path, length, args):
 	assert H.paf_invariant_errors(paf, clean.genome, {"inv": seq}) == []
 
 
+def test_inversion_mapq_from_flanks(tmp_path):
+	"""An inversion's mapping quality is no higher than the lower of its two flanks': a read of 8000
+	bases with a near-copy elsewhere (so its alignment has a close secondary and a lower MAPQ than a
+	unique one), an inverted 300 bp piece and 1500 unique bases. The inversion (tp:A:I) takes the
+	lower flank MAPQ."""
+	rng = H.Rng(61)
+	c1, c2 = rng.dna(40000), rng.dna(20000)
+	c2 = c2[:5000] + H.mutate(rng, c1[10000:18000], 0.003) + c2[13000:]
+	fa = H.write_fasta(str(tmp_path / "ir.fa"), [("chr1", c1), ("chr2", c2)])
+	rq = H.write_fasta(str(tmp_path / "irr.fa"), [("ir", c1[10000:18000] + H.revcomp(c1[18000:18300]) + c1[18300:19800])])
+	paf = H.map_reads(fa, rq, ["-c"]).paf()
+	flanks = [p for p in paf if p.tags["tp"] == "P" and p.tname == "chr1"]
+	inv = [p for p in paf if p.tags["tp"] == "I"]
+	assert len(flanks) == 2 and len(inv) == 1, paf
+	assert (inv[0].qstart, inv[0].qend, inv[0].strand) == (8000, 8300, "-")
+	assert len(set(p.mapq for p in flanks)) == 2  # the flanks differ, so the rule is visible
+	assert inv[0].mapq <= min(p.mapq for p in flanks)
+
+
 def test_chimeric_reads_supplementary_and_SA(clean, tmp_path):
 	"""Chimeric reads (two pieces from loci at least 10 kbp apart, HiFi-like errors): in SAM each read
 	has one primary and one supplementary record (0x800), each placing its piece at the simulated

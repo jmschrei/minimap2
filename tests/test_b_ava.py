@@ -6,6 +6,7 @@ import os
 
 import pytest
 
+import helpers_b as B
 import minimap2_helpers as H
 
 
@@ -168,3 +169,26 @@ def test_heap_sort_same_output(synth, tmp_path, preset, kind):
 	assert H.strip_pg(a) == H.strip_pg(b) and a.count("\n") > 10
 	c = H.map_reads(synth.fasta, fa, ["-a", "--heap-sort=no"], preset=preset).stdout
 	assert H.strip_pg(a) == H.strip_pg(c)
+
+
+def test_ava_min_chain_score(tmp_path):
+	"""-x ava-ont includes -m100 (minimap2.1): ten dovetail pairs sharing 92-110 bases (read A ends
+	with the shared piece, read B starts with it) give overlaps whose chaining score, from brute-force
+	k15/w5 minimizers of the reads, falls on both sides of 100; exactly the pairs scoring at least 100
+	are reported, with that score as s1:i."""
+	rng = H.Rng(71)
+	recs = []
+	for L in range(92, 112, 2):
+		S = rng.dna(L)
+		recs += [("ovA%d" % L, rng.dna(400) + S), ("ovB%d" % L, S + rng.dna(400))]
+	fa = H.write_fasta(str(tmp_path / "ov.fa"), recs)
+	seqs = dict(recs)
+	idx = B.MinimizerIndex(seqs, 5, 15)
+	want = {}
+	for L in range(92, 112, 2):
+		a, b = "ovA%d" % L, "ovB%d" % L
+		anc = [x for x in B.anchors(seqs[a], idx) if x.contig == b and x.strand == "+"]
+		want[(a, b)] = B.chain_dp(anc, 15)[0]
+	assert min(want.values()) < 100 <= max(want.values())
+	got = dict(((p.qname, p.tname), p.tags["s1"]) for p in H.map_reads(fa, fa, [], preset="ava-ont").paf())
+	assert got == dict((k, v) for k, v in want.items() if v >= 100), (got, want)

@@ -158,3 +158,30 @@ def test_ava_output_pinned(sim, preset):
 	"""Pins the current all-vs-all output of base minimap2 (reads against themselves)."""
 	fa, _ = sim[READS[preset]]
 	H.check_pinned("b/%s.paf.gz" % preset, H.map_reads(fa, fa, [], preset=preset).stdout)
+
+
+@pytest.mark.pinned
+def test_short_clr_map_pb_pinned(synth, tmp_path):
+	"""Pins the current output of base minimap2 for 30 short CLR-like reads (indels up to 4 bp) with
+	-x map-pb -c: homopolymer-compressed seeds and indel-dense alignments (CIGAR clean-up after
+	shifting indels left)."""
+	reads = H.simulate_long_reads(synth.genome, 30, profile="clr", seed=77, length=(500, 1500), max_indel=4)
+	fa = H.write_fasta(str(tmp_path / "clr30.fa"), reads)
+	H.check_pinned("b/clr30-map-pb.paf.gz", H.map_reads(synth.fasta, fa, ["-c"], preset="map-pb").stdout)
+
+
+@pytest.mark.pinned
+def test_str_rich_genome_pinned(tmp_path):
+	"""Pins the current output of base minimap2 (-c) for 30 ONT-like reads on a 50 kbp genome with 40
+	short tandem repeats (units of 2-12 bp, 20-60 copies), where consecutive identical minimizers are
+	flagged as tandem seeds."""
+	rng = H.Rng(5)
+	parts = []
+	for i in range(40):
+		parts.append(rng.dna(rng.randint(800, 1500)))
+		u = rng.dna(rng.randint(2, 12))
+		parts.append(u * rng.randint(20, 60))
+	g = H.Genome([("str", "".join(parts))])
+	fa = g.write_fasta(str(tmp_path / "str.fa"))
+	rq = H.write_fasta(str(tmp_path / "strr.fa"), H.simulate_long_reads(g, 30, profile="ont", seed=8, length=(1000, 3000)))
+	H.check_pinned("b/str-map-ont.paf.gz", H.map_reads(fa, rq, ["-c"]).stdout)
