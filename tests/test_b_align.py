@@ -67,7 +67,7 @@ def _check_as(clean, paf, seqs, scoring, min_lines):
 		assert p.tags["AS"] == want, (p.line[:200], want)
 
 
-@pytest.mark.parametrize("preset", sorted(PRESET_SCORING))
+@pytest.mark.parametrize("preset", sorted(set(PRESET_SCORING) - {"lr", "map10k", "map-ccs"}))  # aliases: test_b_presets
 def test_AS_is_cigar_score_under_preset_scoring(clean, read_sets, preset):
 	"""-c with each long-read and assembly preset: AS:i equals the score of the CIGAR under the
 	preset's documented -A/-B/-b/-O/-E (and --score-N 1) on reads with N bases; cg:Z, NM, columns 10
@@ -145,7 +145,8 @@ def test_zdrop_boundary(clean, tmp_path):
 	"""-z INT: a read of 2000 reference bases, 300 bases with 50% substitutions and 2000 more. Let D
 	be the largest Z-drop along its unbroken alignment (from -z 10000): the running score's fall below
 	its maximum minus E times the change of diagonal. -z D keeps one alignment; -z D-1 truncates it
-	into two alignments of the flanks (zd:i:1 on the left one, zd:i:2 on the right one)."""
+	into two alignments of the flanks (zd:i:1 on the left one, zd:i:2 on the right one) whose cm:i and
+	s1:i add up to the unbroken chain's."""
 	ref = clean.genome["chr1"]
 	rng = H.Rng(3)
 	seq = ref[40000:42000] + H.mutate(rng, ref[42000:42300], 0.5) + ref[42300:44300]
@@ -160,13 +161,16 @@ def test_zdrop_boundary(clean, tmp_path):
 	assert sorted((x.qstart < 100, x.qend > 4200, x.tags.get("zd")) for x in split) == [(False, True, 2), (True, False, 1)], split
 	for x in split:
 		assert x.tstart - x.qstart == 40000 and x.cigar == "%dM" % (x.qend - x.qstart)
+	# splitting the chain at the drop splits its minimizers and its score between the two parts
+	assert sum(x.tags["cm"] for x in split) == p.tags["cm"] and sum(x.tags["s1"] for x in split) == p.tags["s1"]
 
 
 @pytest.mark.parametrize("length,args", [(300, []), (600, []), (200, ["-z", "200,100"])])
 def test_inversion_rescue(clean, tmp_path, length, args):
 	"""Inversion rescue (-z INT1,INT2; tp:A:I): a read of 2000 reference bases, the reverse complement
 	of the next `length` bases, and 2000 more. The flanks align on + with zd:i:1/zd:i:2, and the
-	inverted piece aligns on - exactly at its origin as an inversion (tp:A:I) with -c."""
+	inverted piece aligns on - exactly at its origin as an inversion (tp:A:I) with -c, with a mapping
+	quality no higher than its flanks'."""
 	ref = clean.genome["chr1"]
 	seq = ref[30000:32000] + H.revcomp(ref[32000:32000 + length]) + ref[32000 + length:34000 + length]
 	fa = H.write_fasta(str(tmp_path / "inv.fa"), [("inv", seq)])
@@ -177,6 +181,7 @@ def test_inversion_rescue(clean, tmp_path, length, args):
 	assert (i.strand, i.qstart, i.qend, i.tstart, i.tend, i.cigar) == ("-", 2000, 2000 + length, 32000, 32000 + length, "%dM" % length), i.line
 	flanks = sorted((p.qstart, p.qend, p.tstart, p.strand, p.tags.get("zd")) for p in paf if p.tags["tp"] == "P")
 	assert flanks == [(0, 2000, 30000, "+", 1), (2000 + length, 4000 + length, 32000 + length, "+", 2)], flanks
+	assert i.mapq <= min(p.mapq for p in paf if p.tags["tp"] == "P")
 	assert H.paf_invariant_errors(paf, clean.genome, {"inv": seq}) == []
 
 
@@ -275,3 +280,34 @@ def test_end_seed_pen_boundary(tmp_path):
 	for pen, want in ((keep, (0, "19M1500N600M")), (keep + 1, (19, "600M")), (6, (0, "19M1500N600M"))):
 		p = H.map_reads(fa, rq, ["-c", "--end-seed-pen", pen], preset="splice").paf()
 		assert [(x.qstart, x.cigar) for x in p] == [want], (pen, s, g, p)
+
+
+@pytest.fixture(scope="module")
+def special(synth, tmp_path_factory):
+	"""Reads exercising the rarer alignment paths on the standard synthetic genome: an inversion, a
+	600 bp deletion, a 300 bp stretch of 50% substitutions, 400 N bases, three chimeric reads, and
+	ONT-like reads overlapping repeats, inverted repeats, N runs and low-complexity tracts."""
+	d = tmp_path_factory.mktemp("b_special")
+	g = synth.genome
+	ref = g["chr1"]
+	rng = H.Rng(501)
+	recs = [("inv", ref[30000:32000] + H.revcomp(ref[32000:32400]) + ref[32400:34400]),
+		("del600", ref[20000:22000] + ref[22600:24600]),
+		("div", ref[40000:42000] + H.mutate(rng, ref[42000:42300], 0.5) + ref[42300:44300]),
+		("nrun", ref[60000:61500] + "N" * 400 + ref[61900:63400])]
+	recs += [(c.name, c.seq) for c in H.simulate_chimeric_reads(g, 3, profile="hifi", length=(2000, 4000), seed=502)]
+	feats = [f for f in g.features if f.kind in ("repeat", "inversion", "N", "lowcomp")]
+	for i, f in enumerate(feats):
+		s = max(0, f.start - 800)
+		piece = g[f.contig][s:f.end + 800]
+		recs.append(("feat%d" % i, H.mutate(rng, piece, 0.02) if i % 2 else H.revcomp(piece)))
+	return H.write_fasta(str(d / "special.fa"), recs)
+
+
+@pytest.mark.pinned
+@pytest.mark.parametrize("name,preset,extra", [("special-map-ont.sam.gz", "map-ont", ["-a", "--cs", "-Y"]),
+	("special-map-hifi.paf.gz", "map-hifi", ["-c", "--cs"]), ("special-asm20.paf.gz", "asm20", ["-c"])])
+def test_special_reads_pinned(synth, special, name, preset, extra):
+	"""Pins the current output of base minimap2 on reads with inversions, a long deletion, a divergent
+	stretch, an N run, chimeric pieces and genome features (@PG removed)."""
+	H.check_pinned("b/" + name, H.strip_pg(H.map_reads(synth.fasta, special, extra, preset=preset).stdout))

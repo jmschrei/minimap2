@@ -229,3 +229,23 @@ def test_alt_contigs(alt):
 		assert with_alt[r.name].tname == "chr1" and with_alt[r.name].tags["s1"] == s_ref
 		assert with_alt[r.name].mapq >= plain[r.name].mapq
 		assert (no_drop[r.name].line == plain[r.name].line)
+
+
+@pytest.mark.pinned
+def test_opposite_strand_secondary_retained(tmp_path):
+	"""Records base minimap2's behaviour (undocumented heuristic in mm_select_sub and
+	mm_filter_strand_retained): without -c, a secondary chain on the opposite strand to its primary
+	that scores above 0.8 * -g is kept even below -p, unless much more divergent than the primary.
+	A 6 kbp read with an exact 5 kbp partial copy elsewhere: at -p 0.9 the copy is dropped when it is
+	on the read's strand and kept as a secondary when reverse-complemented; with -c it is dropped."""
+	rng = H.Rng(47)
+	c1, c2 = rng.dna(30000), rng.dna(30000)
+	U = c1[5000:11000]
+	rq = H.write_fasta(str(tmp_path / "u.fa"), [("u", U)])
+	for strand in ("+", "-"):
+		part = U[:5000] if strand == "+" else H.revcomp(U[:5000])
+		fa = H.write_fasta(str(tmp_path / ("sr%s.fa" % ("p" if strand == "+" else "m"))), [("chr1", c1), ("chr2", c2[:10000] + part + c2[15000:])])
+		paf = H.map_reads(fa, rq, ["-p", "0.9"]).paf()
+		want = [("chr1", "+", "P")] + ([("chr2", "-", "S")] if strand == "-" else [])
+		assert [(p.tname, p.strand, p.tags["tp"]) for p in paf] == want, (strand, paf)
+		assert [(p.tname, p.tags["tp"]) for p in H.map_reads(fa, rq, ["-p", "0.9", "-c"]).paf()] == [("chr1", "P")]

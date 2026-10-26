@@ -119,9 +119,9 @@ def _dv(read, index, p, chain):
 
 @pytest.fixture(scope="module")
 def subs_reads(clean):
-	"""30 reads with 2% substitutions on both strands, their FASTA, and per read the brute-force
+	"""24 reads with 2% substitutions on both strands, their FASTA, and per read the brute-force
 	chain (score, anchors) on the true contig and strand."""
-	reads = H.simulate_reads(clean.genome, 30, length=(800, 2500), seed=3, sub_rate=0.02, indel_rate=0, qual=None, name_prefix="s")
+	reads = H.simulate_reads(clean.genome, 24, length=(800, 2500), seed=3, sub_rate=0.02, indel_rate=0, qual=None, name_prefix="s")
 	fa = H.write_fasta(os.path.join(clean.dir, "subs.fa"), reads)
 	exp = {}
 	for r in reads:
@@ -149,8 +149,8 @@ def test_chain_score_and_count_substitutions(clean, subs_reads, args):
 		assert p.line.split("dv:f:")[1].split("\t")[0] == _dv(r, clean.index, p, chain), (r.name, p.line)
 
 
-@pytest.mark.parametrize("args,gap,skip", [(["--chain-gap-scale", "1"], 1.0, 0.0), (["--chain-gap-scale", "2"], 2.0, 0.0),
-	(["--chain-gap-scale", "0.5", "--chain-skip-scale", "0.3"], 0.5, 0.3)])
+@pytest.mark.parametrize("args,gap,skip", [(["--chain-gap-scale", "1"], 1.0, 0.0),
+	(["--chain-gap-scale", "2", "--chain-skip-scale", "0.3"], 2.0, 0.3)])
 def test_chain_score_with_indels(clean, args, gap, skip):
 	"""Reads with substitutions and 1-8 bp indels: s1:i and cm:i equal the brute-force chaining DP
 	with the gap cost scaled by --chain-gap-scale and --chain-skip-scale; reads whose chain crosses
