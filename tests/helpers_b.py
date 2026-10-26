@@ -4,16 +4,15 @@ Reference implementations written from minimap2's documentation and papers,
 not from its code paths, so tests can derive expected values independently:
 
 	mm_hash64 / minimizers      the invertible integer hash and the (w,k)-minimizer
-	                            rule of Li (2016, 2018) and minimap2.1: in every window
-	                            of w consecutive k-mers the k-mers with the smallest
-	                            hash of the canonical k-mer, all of them on ties
+	                            rule (minimap2_helpers.kmer_hash and .minimizers, with
+	                            a tied window raising ValueError)
 	MinimizerIndex / anchors    reference minimizers by k-mer, and the anchors
 	                            (matching minimizers) of a query against them
 	chain_dp / chain_gap_cost   the chaining score of Li (2018), eq. 1-2, with the
 	                            gap cost scaled as minimap2 documents for
 	                            --chain-gap-scale/--chain-skip-scale
 	covered_bases               the chaining score of gap-free collinear anchors
-	cigar_score_full            CIGAR score with -A/-B/-b/-O/-E/--score-N
+	cigar_score_full            CIGAR score with -A/-B/-b/-O/-E/--score-N (minimap2_helpers.cigar_score)
 	peak_score                  the max-scoring segment of an alignment (ms:i, -s)
 	affine_global / affine_ext  brute-force two-piece affine alignment (Gotoh)
 	many_copy_genome            a 160 kbp genome with a 120-copy family (high-occurrence seeds)
@@ -24,81 +23,23 @@ import math
 
 import minimap2_helpers as H
 
-_NT = {"A": 0, "C": 1, "G": 2, "T": 3, "a": 0, "c": 1, "g": 2, "t": 3}
-
-
 def mm_hash64(key, k):
 	"""Thomas Wang's invertible 64-bit integer hash restricted to 2k bits, as minimap2 uses it
-	(Li 2016, minimap paper; Li 2018): a bijection on [0, 4^k)."""
-	mask = (1 << (2 * k)) - 1
-	key = (~key + (key << 21)) & mask
-	key = key ^ (key >> 24)
-	key = ((key + (key << 3)) + (key << 8)) & mask
-	key = key ^ (key >> 14)
-	key = ((key + (key << 2)) + (key << 4)) & mask
-	key = key ^ (key >> 28)
-	key = (key + (key << 31)) & mask
-	return key
+	(Li 2016, minimap paper; Li 2018): a bijection on [0, 4^k) (minimap2_helpers.kmer_hash)."""
+	return H.kmer_hash(key, k)
 
 
 def kmers(seq, k):
-	"""[(end position, hash of the canonical k-mer, strand)] for every k-mer of seq without a non-ACGT
-	base; strand is 0 if the forward k-mer is the smaller encoding, 1 otherwise. k must be odd, so no
-	k-mer equals its reverse complement."""
-	if k % 2 == 0:
-		raise ValueError("odd k only (even k admits palindromic k-mers, which minimap2 skips)")
-	mask = (1 << (2 * k)) - 1
-	shift = 2 * (k - 1)
-	fwd = rev = 0
-	run = 0
-	out = []
-	for i, ch in enumerate(seq):
-		c = _NT.get(ch)
-		if c is None:
-			run = 0
-			fwd = rev = 0
-			continue
-		fwd = ((fwd << 2) | c) & mask
-		rev = (rev >> 2) | ((3 ^ c) << shift)
-		run += 1
-		if run >= k:
-			z = 0 if fwd < rev else 1
-			out.append((i, mm_hash64(fwd if z == 0 else rev, k), z))
-	return out
+	"""[(end position, hash of the canonical k-mer, strand)] for every k-mer of seq without an ambiguous
+	base (minimap2_helpers.kmer_runs; odd k only)."""
+	return [(q.pos, q.hash, q.strand) for run in H.kmer_runs(seq, k) for q in run]
 
 
 def minimizers(seq, w, k):
-	"""The (w,k)-minimizers of seq as a sorted list of (end position, hash, strand).
-
-	For every window of w consecutive k-mers inside a stretch of ACGT bases, the k-mers with the
-	smallest hash is the minimizer. A stretch shorter than one window contributes its smallest k-mer.
-	A tie (one k-mer twice in a window, i.e. a tandem repeat) raises ValueError: minimap2's choice
-	among tied k-mers is not modelled. Sequences with non-ACGT bases are only supported where the
-	tests avoid the window edges next to them, so tests use ACGT-only sequences."""
-	km = kmers(seq, k)
-	out = set()
-	# split into runs of consecutive k-mers (a non-ACGT base breaks the run)
-	runs, cur = [], []
-	for x in km:
-		if cur and x[0] != cur[-1][0] + 1:
-			runs.append(cur)
-			cur = []
-		cur.append(x)
-	if cur:
-		runs.append(cur)
-	for r in runs:
-		if len(r) < w:
-			m = min(h for _, h, _ in r)
-			out.update(x for x in r if x[1] == m)
-			continue
-		for s in range(len(r) - w + 1):
-			win = r[s:s + w]
-			m = min(h for _, h, _ in win)
-			tied = [x for x in win if x[1] == m]
-			if len(tied) > 1:
-				raise ValueError("a k-mer occurs twice in one window at %d; tandem repeats are not modelled" % tied[0][0])
-			out.update(tied)
-	return sorted(out)
+	"""The (w,k)-minimizers of seq as a sorted list of (end position, hash, strand)
+	(minimap2_helpers.minimizers). A window holding its minimum twice (a tandem repeat) raises
+	ValueError: B's brute-force chaining assumes no ties."""
+	return H.minimizers(seq, w, k, ties=False)
 
 
 class MinimizerIndex(object):
@@ -248,18 +189,8 @@ def column_score(t, q, a, b, transition, sc_ambi):
 	return -b
 
 
-def cigar_score_full(ref, pos0, seq, cigar, a=2, b=4, q=4, e=2, q2=24, e2=1, sc_ambi=1, transition=0):
-	"""Alignment score of a CIGAR (seq in reference orientation, clips included): +a per match,
-	-b per mismatch, -transition for an A<->G or C<->T mismatch when transition is non-zero (-b),
-	-sc_ambi for a column with a non-ACGT base (--score-N), min(q+k*e, q2+k*e2) per k-long gap."""
-	s = 0
-	for x in H._walk(ref, pos0, seq, cigar):
-		if x[0] == "M":
-			s += column_score(x[1], x[2], a, b, transition, sc_ambi)
-		elif x[0] in "ID":
-			n = len(x[1])
-			s -= min(q + n * e, q2 + n * e2)
-	return s
+# -A/-B/-b/-O/-E/--score-N score of a CIGAR: the shared scorer
+cigar_score_full = H.cigar_score
 
 
 def peak_score(ref, pos0, seq, cigar, a=2, b=4, q=4, e=2, sc_ambi=1, transition=0):

@@ -2,278 +2,44 @@
 
 Standard library only.
 
-	hash64, kmer_runs,          a reference (w,k)-minimizer scan written from
-	SketchRef                   the rule in minimap2.1 ("a minimizer is the
-	                            smallest k-mer in a window of w consecutive
-	                            k-mers"), sketch.c's documented hash and the
-	                            HPC definition of -H
-	read_mmi / MmiPart          a reader for the .mmi format (minimap.h's
-	                            MM_IDX_MAGIC, mm_idx_dump's layout) that
-	                            decodes the minimizer table into
-	                            {hash: positions}
+	hash64, kmer_runs,          the reference (w,k)-minimizer scan and the .mmi
+	SketchRef, read_mmi,        reader, aliases of the shared ones in
+	MmiPart, expected_index     minimap2_helpers (kmer_hash, kmer_runs, SketchRef,
+	                            read_mmi, ...)
 	sdust_reference             the symmetric DUST rule of Morgulis et al.
 	                            (2006): the union of perfect intervals of at
 	                            most W bases
 	random_dna, write_fa        small sequence utilities
 """
 
-import bisect
 import collections
-import struct
 
 import minimap2_helpers as H
 
 # ---------------------------------------------------------------------------
-# Minimizers
+# Minimizers and .mmi files: the shared reference in minimap2_helpers, under the names the area A
+# tests use
 # ---------------------------------------------------------------------------
 
-# sketch.c's seq_nt4_table: A/C/G/T/U in either case -> 0..3, anything else -> 4
-_NT4 = {"A": 0, "C": 1, "G": 2, "T": 3, "U": 3, "a": 0, "c": 1, "g": 2, "t": 3, "u": 3}
+_NT4 = H._SKETCH_NT4  # sketch.c's seq_nt4_table: A/C/G/T/U in either case -> 0..3, anything else -> 4
 
 
 def hash64(key, mask):
-	"""sketch.c's invertible integer hash of a 2k-bit k-mer, restricted to `mask`."""
-	key = (~key + (key << 21)) & mask
-	key = key ^ (key >> 24)
-	key = ((key + (key << 3)) + (key << 8)) & mask
-	key = key ^ (key >> 14)
-	key = ((key + (key << 2)) + (key << 4)) & mask
-	key = key ^ (key >> 28)
-	key = (key + (key << 31)) & mask
-	return key
+	"""sketch.c's invertible integer hash of a 2k-bit k-mer, restricted to `mask` = 4^k - 1."""
+	return H.kmer_hash(key, mask.bit_length() // 2)
 
 
-Kmer = collections.namedtuple("Kmer", "x pos strand")  # x = hash << 8 | span; pos = last base; strand 0 fwd < rev
-SKIP = (1 << 64) - 1  # x of a k-mer that cannot be a minimizer (HPC span >= 256)
-
-
-def kmer_runs(seq, k, hpc=False):
-	"""The canonical k-mers of seq, one list per maximal run of A/C/G/T/U.
-
-	A k-mer is canonical on the strand whose 2-bit encoding is smaller
-	(strand 0: forward); it is keyed by x = hash64(kmer) << 8 | span, where
-	span is k, or with hpc the length in the original sequence of the k
-	homopolymer-compressed bases. pos is the 0-based position of the k-mer's
-	last base (with hpc, the last base of its last homopolymer run). Any
-	other character ends a run. An HPC k-mer spanning 256 bases or more
-	cannot be stored in x's 8 bits: it keeps its place in the window but is
-	never a minimizer (x = SKIP). Only odd k (no k-mer is its own reverse
-	complement) is modelled; even k raises.
-	"""
-	if k % 2 == 0 or not 0 < k <= 28:
-		raise ValueError("the reference models odd k in 1..28 only")
-	mask = (1 << 2 * k) - 1
-	shift = 2 * (k - 1)
-	runs, cur = [], None
-	n, i = len(seq), 0
-	fwd = rev = l = span = 0
-	spans = collections.deque()
-	while i < n:
-		c = _NT4.get(seq[i], 4)
-		if c > 3:
-			cur = None
-			i += 1
-			continue
-		if cur is None:
-			cur = []
-			runs.append(cur)
-			fwd = rev = l = span = 0
-			spans.clear()
-		run = 1
-		if hpc:
-			while i + run < n and _NT4.get(seq[i + run], 4) == c:
-				run += 1
-			i += run - 1
-			spans.append(run)
-			span += run
-			if len(spans) > k:
-				span -= spans.popleft()
-		else:
-			span = k
-		fwd = ((fwd << 2) | c) & mask
-		rev = (rev >> 2) | ((3 - c) << shift)
-		l += 1
-		if l >= k:
-			z = 0 if fwd < rev else 1
-			cur.append(Kmer(hash64(fwd if z == 0 else rev, mask) << 8 | span if span < 256 else SKIP, i, z))
-		i += 1
-	return runs
-
-
-def _window_minima(kms, w):
-	"""[frozenset of the k-mers with the smallest x] for each window of w consecutive k-mers of kms;
-	a run with 1..w-1 k-mers has one window holding all of them."""
-	if not kms:
-		return []
-	if len(kms) < w:
-		m = min(q.x for q in kms)
-		return [frozenset(q for q in kms if q.x == m and m != SKIP)]
-	where = collections.defaultdict(list)
-	for j, q in enumerate(kms):
-		where[q.x].append(j)
-	out, dq = [], collections.deque()
-	for j, q in enumerate(kms):
-		while dq and kms[dq[-1]].x >= q.x:
-			dq.pop()
-		dq.append(j)
-		if dq[0] <= j - w:
-			dq.popleft()
-		if j >= w - 1:
-			m = kms[dq[0]].x
-			if m == SKIP:
-				out.append(frozenset())
-				continue
-			idx = where[m]
-			lo = bisect.bisect_left(idx, j - w + 1)
-			hi = bisect.bisect_right(idx, j)
-			out.append(frozenset(kms[t] for t in idx[lo:hi]))
-	return out
-
-
-class SketchRef(object):
-	"""Reference (w,k)-minimizers of one sequence.
-
-	runs[r] are the k-mers of the r-th A/C/G/T/U run and windows[r] the
-	minimum-x sets of its windows of w consecutive k-mers. A run with fewer
-	than w k-mers has one short window; its minimum is the run's minimizer.
-	"""
-
-	def __init__(self, seq, w, k, hpc=False):
-		self.seq, self.w, self.k, self.hpc = seq, w, k, hpc
-		self.runs = kmer_runs(seq, k, hpc)
-		self.windows = [_window_minima(r, w) for r in self.runs]
-
-	@property
-	def has_ties(self):
-		"""True if some window's minimum occurs more than once in it."""
-		return any(len(s) > 1 for ws in self.windows for s in ws)
-
-	def minimizers(self):
-		"""Every window minimum of every run, sorted by position: the documented rule."""
-		u = set()
-		for ws in self.windows:
-			for s in ws:
-				u |= s
-		return sorted(u, key=lambda q: q.pos)
-
-	def kmer_at(self):
-		"""{pos: Kmer} for every k-mer of the sequence."""
-		return dict((q.pos, q) for r in self.runs for q in r if q.x != SKIP)
-
-
-def expected_index(seqs, w, k, hpc=False):
-	"""{hash: sorted tuple of rid << 32 | pos << 1 | strand} that an index of seqs must hold, from the
-	documented minimizer rule (for sequences without ambiguous bases and without ties in a window)."""
-	out = collections.defaultdict(list)
-	for rid, s in enumerate(seqs):
-		ref = SketchRef(s, w, k, hpc)
-		if len(ref.runs) > 1 or ref.has_ties:
-			raise ValueError("sequence %d has an ambiguous base or a tied window; the exact reference does not apply" % rid)
-		for q in ref.minimizers():
-			out[q.x >> 8].append(rid << 32 | q.pos << 1 | q.strand)
-	return dict((h, tuple(sorted(v))) for h, v in out.items())
-
-
-# ---------------------------------------------------------------------------
-# .mmi files
-# ---------------------------------------------------------------------------
-
-MMI_MAGIC = b"MMI\x02"  # minimap.h MM_IDX_MAGIC
-I_HPC, I_NO_SEQ, I_NO_NAME = 0x1, 0x2, 0x4  # minimap.h MM_I_*
-
-
-class MmiPart(object):
-	"""One index of a .mmi file (a multi-part index holds several back to back).
-
-	w, k, b, flag: the header; names and lengths of the n_seq sequences;
-	minimizers: {hash: tuple of positions rid << 32 | pos << 1 | strand,
-	sorted}; seq4: the 4-bit base codes (0-3 ACGT, 4 other) per sequence,
-	or None with --idx-no-seq; n_singletons: hashes stored once.
-	"""
-
-	def __init__(self):
-		self.w = self.k = self.b = self.flag = 0
-		self.names, self.lengths, self.minimizers, self.seq4 = [], [], {}, None
-		self.n_singletons = 0
-		self.offset = self.end = 0  # byte range in the file
-
-	@property
-	def n_seq(self):
-		return len(self.names)
-
-	def seq_codes(self, rid):
-		return self.seq4[rid] if self.seq4 is not None else None
-
-
-def _parse_part(data, off):
-	p = MmiPart()
-	p.offset = off
-	if data[off:off + 4] != MMI_MAGIC:
-		raise ValueError("no MMI magic at byte %d" % off)
-	off += 4
-	p.w, p.k, p.b, n_seq, p.flag = struct.unpack_from("<5I", data, off)
-	off += 20
-	for _ in range(n_seq):
-		l = data[off]
-		off += 1
-		p.names.append(data[off:off + l].decode("ascii", "surrogateescape") if l else None)
-		off += l
-		p.lengths.append(struct.unpack_from("<I", data, off)[0])
-		off += 4
-	mins = {}
-	for bi in range(1 << p.b):
-		n, = struct.unpack_from("<i", data, off)
-		off += 4
-		pos = struct.unpack_from("<%dQ" % n, data, off) if n else ()
-		off += 8 * n
-		size, = struct.unpack_from("<I", data, off)
-		off += 4
-		used = 0
-		for j in range(size):
-			key, val = struct.unpack_from("<2Q", data, off)
-			off += 16
-			h = (key >> 1) << p.b | bi
-			if h in mins:
-				raise ValueError("hash %d stored twice" % h)
-			if key & 1:
-				mins[h] = (val,)
-				p.n_singletons += 1
-			else:
-				st, cnt = val >> 32, val & 0xffffffff
-				if cnt < 2 or st + cnt > n:
-					raise ValueError("bucket %d: bad position range %d+%d of %d" % (bi, st, cnt, n))
-				mins[h] = tuple(pos[st:st + cnt])
-				used += cnt
-		if used != n:
-			raise ValueError("bucket %d: %d positions stored, %d referenced" % (bi, n, used))
-	p.minimizers = mins
-	if not p.flag & I_NO_SEQ:
-		total = sum(p.lengths)
-		nw = (total + 7) // 8
-		words = struct.unpack_from("<%dI" % nw, data, off)
-		off += 4 * nw
-		codes = bytearray(total)
-		for i in range(total):
-			codes[i] = (words[i >> 3] >> ((i & 7) << 2)) & 0xf
-		p.seq4, o = [], 0
-		for l in p.lengths:
-			p.seq4.append(bytes(codes[o:o + l]))
-			o += l
-	p.end = off
-	return p, off
-
-
-def read_mmi(path):
-	"""All parts of a .mmi file, in order; raises ValueError on a malformed file or trailing bytes."""
-	with open(str(path), "rb") as f:
-		data = f.read()
-	parts, off = [], 0
-	while off < len(data):
-		p, off = _parse_part(data, off)
-		parts.append(p)
-	if not parts:
-		raise ValueError("empty .mmi file")
-	return parts
+Kmer = H.Kmer  # (x, pos, strand), x = hash << 8 | span
+SKIP = H.KMER_SKIP
+kmer_runs = H.kmer_runs
+_window_minima = H._window_minima
+SketchRef = H.SketchRef
+expected_index = H.expected_index
+MMI_MAGIC = H.MMI_MAGIC
+I_HPC, I_NO_SEQ, I_NO_NAME = H.MM_I_HPC, H.MM_I_NO_SEQ, H.MM_I_NO_NAME
+MmiPart = H.MmiPart
+_parse_part = H._parse_mmi_part
+read_mmi = H.read_mmi
 
 
 def seq_codes(seq):
