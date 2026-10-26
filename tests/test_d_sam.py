@@ -220,6 +220,31 @@ def test_supplementary_and_sa(synth, mixed, base_sam):
 		assert all("SA" not in r.tags for r in by[name])
 
 
+def test_sa_gives_each_alignments_own_mapq(synth, tmp_path):
+	"""SAM spec, SA:Z: each entry is rname,pos,strand,CIGAR,mapQ,NM of another alignment of the read.
+	Chimeric reads of 2.5 kbp of unique sequence followed by a whole copy of an exact repeat (either
+	strand): the unique piece is the primary with a high MAPQ, the repeat piece a supplementary
+	alignment with a low one, and each record's SA:Z entry carries the MAPQ (and position and
+	strand) of the other record, not its own."""
+	g = synth.genome
+	reps = [f for f in g.features if f.kind == "repeat"][:4]
+	starts = [st for st in range(1000, 70000, 997) if g.is_unique("chr1", st, st + 2500, 200)]
+	reads = []
+	for i, f in enumerate(reps):
+		st = [x for x in starts if abs(x - f.start) > 5000][i]
+		reads.append(("cr%d" % i, g.fetch("chr1", st, st + 2500) + g.fetch(f.contig, f.start, f.end, "+-"[i % 2])))
+	sam = H.map_reads(synth.fasta, H.write_fasta(str(tmp_path / "cr.fa"), reads), ["-a"]).sam()
+	n_diff = 0
+	for name, _ in reads:
+		recs = [r for r in sam.by_qname()[name] if not r.is_secondary]
+		assert len(recs) == 2 and sum(r.is_supplementary for r in recs) == 1, [r.line[:80] for r in recs]
+		for r, o in (recs, recs[::-1]):
+			e = D.sa_entries(r)
+			assert len(e) == 1 and (e[0][0], e[0][1], e[0][2], e[0][4], e[0][5]) == (o.rname, o.pos, o.strand, o.mapq, o.tags["NM"])
+		n_diff += recs[0].mapq != recs[1].mapq
+	assert n_diff == len(reads)
+
+
 def _sa_sorted(entries):
 	return sorted(entries, key=lambda e: (e[0], e[1], e[2]))
 

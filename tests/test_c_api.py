@@ -146,18 +146,40 @@ def test_map_splice_api(synth_tx, tmp_path):
 def test_map_frag_api(synth, tmp_path):
 	"""mm_map_frag() on forward-reverse pairs (mate 2 reverse-complemented first, as map.c does for
 	the sr preset): one primary per mate at its true contig, strand and position, proper_frag on both;
-	every hit has seg_split set and seg_id = its mate's index; pe_thru marks exactly the pairs whose
-	fragment is no longer than the reads (both mates cover the same bases). mm_map_frag() with one
-	segment gives the hits of mm_map(); more than MM_MAX_SEG segments give no hits."""
+	every hit has seg_split set and seg_id = its mate's index; pe_thru (paired-end read-through) marks
+	exactly the pairs whose fragment is no longer than the reads, so that both mates cover the same
+	bases: fragments of 150 bp, and fragments of 140 and 145 bp read through into adapter sequence,
+	where mate 1's alignment may run 1 or 2 bases into its adapter when those bases happen to match the
+	genome, or mate 2's alignment may start 2 bases late after a sequencing error. mm_map_frag() with one segment gives the hits of mm_map(); more than MM_MAX_SEG segments
+	give no hits."""
 	g = synth.genome
 	pairs = H.simulate_pairs(g, 30, seed=502, insert_mean=320, insert_sd=40, min_insert=200, unique=True, indel_rate=0, qual=None)
 	thru = H.simulate_pairs(g, 10, seed=503, insert_mean=150, insert_sd=0, unique=True, indel_rate=0, qual=None, name_prefix="t")
-	allp = pairs + thru
-	f1, f2 = H.write_pairs(str(tmp_path / "1.fa"), str(tmp_path / "2.fa"), allp)
-	tsv = str(tmp_path / "truth.tsv")
-	with open(tsv, "w") as f:
-		for p in allp:
-			f.write("%s\t%s\t%d\t%s\t%d\t%s\t%d\n" % (p.name, p.contig, p.r1.pos, p.r1.strand, p.r2.pos, p.r2.strand, p.insert))
+	rows = [(p.name, p.contig, p.r1.pos, p.r1.strand, p.r2.pos, p.r2.strand, p.insert) for p in pairs + thru]
+	r1 = [(p.name, p.r1.seq) for p in pairs + thru]
+	r2 = [(p.name, p.r2.seq) for p in pairs + thru]
+	adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC"
+	other = {"A": "C", "C": "A", "G": "T", "T": "G"}
+	# six positions where base maps both mates: with -x sr, mate 2 of some read-through pairs is left
+	# unmapped although it aligns uniquely (base behaviour; see Rules)
+	starts = [3000, 4500, 6000, 7500, 12000, 10500]
+	assert all(g.is_unique("chr1", s - 30, s + 180, 20) for s in starts)
+	for i, st in enumerate(starts):
+		frag, ext = (140, 145)[i % 2], i % 3  # ext: adapter bases of mate 1 that match the genome
+		a1 = g.fetch("chr1", st + frag, st + frag + ext)
+		a1 += other[g.fetch("chr1", st + frag + ext, st + frag + ext + 1)] + adapter
+		a2 = H.revcomp(other[g.fetch("chr1", st - 1, st)]) + adapter  # mate 2's adapter does not extend it
+		f = g.fetch("chr1", st, st + frag)
+		if i >= 3:  # a sequencing error in mate 2's second-last fragment base: its alignment starts 2 bases later
+			f = f[0] + other[f[1]] + f[2:]
+		m1 = g.fetch("chr1", st, st + frag) + a1[:150 - frag]
+		m2 = H.revcomp(f) + a2[:150 - frag]
+		name = "ad%d" % i
+		rows.append((name, "chr1", st, "+", st + frag - 150, "-", frag))
+		r1.append((name, m1))
+		r2.append((name, m2))
+	f1, f2 = H.write_fasta(str(tmp_path / "1.fa"), r1), H.write_fasta(str(tmp_path / "2.fa"), r2)
+	tsv = H.write_text(str(tmp_path / "truth.tsv"), "".join("%s\t%s\t%d\t%s\t%d\t%s\t%d\n" % r for r in rows))
 	assert all(p.insert == 150 for p in thru) and all(p.insert >= 200 for p in pairs)
 	H.assert_c_case(DRV, "map_frag", synth.fasta, f1, f2, tsv, 0)
 

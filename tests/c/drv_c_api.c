@@ -467,7 +467,7 @@ static int case_map_frag(int argc, char *argv[])
 			}
 			MMT_CHECKF(pri[0]->proper_frag && pri[1]->proper_frag, "pair %s: proper_frag %d %d", name, pri[0]->proper_frag, pri[1]->proper_frag);
 			// pe_thru: both mates cover the same reference interval (read-through of a fragment no longer than the reads)
-			MMT_CHECKF(pri[0]->pe_thru == (frag == qlens[0] && qlens[0] == qlens[1]) && pri[1]->pe_thru == pri[0]->pe_thru,
+			MMT_CHECKF(pri[0]->pe_thru == (frag <= qlens[0] && qlens[0] == qlens[1]) && pri[1]->pe_thru == pri[0]->pe_thru,
 				"pair %s (fragment %ld): pe_thru %d %d", name, frag, pri[0]->pe_thru, pri[1]->pe_thru);
 			n_thru += pri[0]->pe_thru;
 		}

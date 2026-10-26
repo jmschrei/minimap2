@@ -145,6 +145,40 @@ def test_pairing_places_repetitive_mates(synth, repeat_pairs):
 	assert not any(r.is_proper_pair for r in indep.records)
 
 
+def test_pairs_of_repetitive_mates(tmp_path):
+	"""Both mates inside exact repeats. On one 40 kbp contig, units R and Q (400 bp) have three copies
+	each and only R1 and Q1 lie within -F of each other; units S and T have two copies each, and both
+	S1-T1 and S2-T2 are 500 bp apart. Alone every mate has MAPQ 0 (--pairing=no). Paired with -x sr:
+	a pair from R1 and Q1 has one consistent placement, so both mates are proper, at their true
+	positions, with MAPQ above 0, the same for both mates (each mate is equally repetitive and they are
+	placed together); a pair from S and T has two equally good placements, so both mates are proper at
+	one of them with MAPQ at most 3 (SAM spec: -10 log10 of a 1/2 chance of being wrong)."""
+	rng = H.Rng(901)
+	ctg = list(rng.dna(40000))
+	units = [rng.dna(400) for _ in range(4)]
+	for u, starts in zip(units, ((2000, 12000, 33000), (2500, 17000, 37000), (6000, 24000), (6500, 24500))):
+		for st in starts:
+			ctg[st:st + 400] = list(u)
+	g = "".join(ctg)
+	fa = H.write_fasta(str(tmp_path / "g.fa"), [("c", g)])
+	specs = [("u0", 2150, 2600), ("u1", 2050, 2700), ("u2", 2200, 2550), ("a0", 6150, 6600), ("a1", 6050, 6700)]
+	f1 = H.write_fasta(str(tmp_path / "1.fa"), [(n, g[a:a + 150]) for n, a, b in specs])
+	f2 = H.write_fasta(str(tmp_path / "2.fa"), [(n, H.revcomp(g[b:b + 150])) for n, a, b in specs])
+	indep = H.map_reads(fa, [f1, f2], ["-a", "--pairing=no"], preset="sr").sam()
+	assert len(indep.records) == 10 and all(r.mapq == 0 and not r.is_unmapped for r in indep.records)
+	sam = H.map_reads(fa, [f1, f2], ["-a"], preset="sr").sam()
+	assert H.pair_invariant_errors(sam) == []
+	prim = sam.primaries()
+	for name, a, b in specs:
+		r1, r2 = prim[(name, 1)], prim[(name, 2)]
+		assert r1.is_proper_pair and r2.is_proper_pair and r1.cigar == r2.cigar == "150M", (r1.line[:80], r2.line[:80])
+		shift = r1.pos0 - a
+		if name.startswith("u"):
+			assert (r1.pos0, r2.pos0) == (a, b) and r1.mapq == r2.mapq > 0, (name, r1.mapq, r2.mapq)
+		else:
+			assert shift in (0, 18000) and r2.pos0 - b == shift and r1.mapq <= 3 and r2.mapq <= 3, (name, r1.pos0, r1.mapq, r2.mapq)
+
+
 def test_pairing_no_aligns_ends_independently(synth, sr_pairs, sr_default):
 	"""--pairing=no (minimap2.1): the two ends are aligned independently with no 'properly paired' set;
 	--no-pairing is its deprecated spelling and gives identical output. Records keep 0x1, 0x40/0x80 and

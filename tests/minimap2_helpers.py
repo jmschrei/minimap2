@@ -748,7 +748,8 @@ def simulate_long_reads(genome, n, profile="ont", seed=1, **kw):
 def simulate_pairs(genome, n, read_length=150, insert_mean=300, insert_sd=30, seed=1, sub_rate=0.01,
 		indel_rate=0.0005, max_indel=3, end_margin=10, n_rate=0.0, unique=False, unique_pad=0, contigs=None,
 		qual="random", name_prefix="p", min_insert=None):
-	"""n FR read pairs. Inserts are ~normal(insert_mean, insert_sd), at least min_insert (default read_length).
+	"""n FR read pairs. Inserts are ~normal(insert_mean, insert_sd), at least min_insert (default read_length,
+	or its lower bound for a (min, max) range of read lengths) and at least the longer mate.
 
 	For a '+' fragment, r1 is forward from frag_start and r2 is reverse
 	ending near frag_end; for a '-' fragment the roles swap. frag_end is the
@@ -757,7 +758,10 @@ def simulate_pairs(genome, n, read_length=150, insert_mean=300, insert_sd=30, se
 	Both reads carry the pair's name (no /1 /2; the writers can add them).
 	"""
 	rng = Rng(seed)
-	lo = read_length if min_insert is None else min_insert
+	if min_insert is not None:
+		lo = min_insert
+	else:
+		lo = read_length[0] if isinstance(read_length, (tuple, list)) else read_length
 	out = []
 	for i in range(n):
 		L1 = _draw_len(rng, read_length)

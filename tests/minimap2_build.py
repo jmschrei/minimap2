@@ -71,6 +71,19 @@ def make_args():
 	return shlex.split(os.environ.get("MINIMAP2_TEST_MAKE_ARGS", ""))
 
 
+def sanitizer_flags():
+	"""Compiler flags the C drivers need to link against a sanitizer build of libminimap2.a: the
+	Makefile's asan=1 and tsan=1 add -fsanitize=address or -fsanitize=thread to CFLAGS and LIBS."""
+	out = []
+	for a in make_args():
+		k, _, v = a.partition("=")
+		if k == "asan" and v:
+			out.append("-fsanitize=address")
+		elif k == "tsan" and v:
+			out.append("-fsanitize=thread")
+	return out
+
+
 def cache_root():
 	d = os.environ.get("MINIMAP2_TEST_CACHE_DIR")
 	if not d:
@@ -282,6 +295,7 @@ def c_driver(name, extra_cflags=()):
 	"""
 	lib, inc = libminimap2()
 	cc = compiler()
+	extra_cflags = list(extra_cflags) + sanitizer_flags()
 	h = hashlib.sha256()
 	h.update(os.path.basename(inc).encode())
 	h.update(" ".join(extra_cflags).encode())

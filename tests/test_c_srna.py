@@ -120,6 +120,28 @@ def test_jump_annotation_extends_read_ends(tx, index_of):
 	assert H.sam_body(via_idx.stdout) == out["bed12"]
 
 
+def test_jump_with_a_mismatch_near_the_junction(tx):
+	"""-j on overhang reads (8 or 12 bases into the next exon, or starting that far before an exon end;
+	both orientations) with one substitution 2 bases from the junction on the long side: every read
+	is still extended across its annotated intron, and NM, the CIGAR's span and cs:Z (the substitution
+	and the intron) agree with the genome. (A substitution 4 bases from the junction can be counted
+	twice in NM: base behaviour; see Rules.)"""
+	other = {"A": "C", "C": "A", "G": "T", "T": "G"}
+	reads, truth = [], {}
+	for n, seq, t in C.overhang_reads(tx["genome"], tx["genome"].genes, overhangs=(8, 12)):
+		k = t[2]
+		p = 100 - k - 2 if "_end" in n else k + 1
+		m = seq[:p] + other[seq[p]] + seq[p + 1:]
+		reads += [(n + "m", m), (n + "mrc", H.revcomp(m))]
+		truth[n + "m"] = truth[n + "mrc"] = t
+	fa = H.write_fasta(str(tx["dir"] / "overhang_mm.fa"), reads)
+	sam = H.map_reads(tx["fasta"], fa, ["-a", "--cs", "-j", tx["jbed"]], preset="splice:sr").sam()
+	assert H.sam_invariant_errors(sam, tx["genome"], dict((n, [s]) for n, s in reads)) == []
+	got = _jumped(sam, truth)
+	assert len(got) == len(reads) and all(got.values()), sorted(q for q, ok in got.items() if not ok)[:10]
+	assert all(r.tags["NM"] == 1 and r.tags["cs"].count("*") == 1 for r in sam.records if r.is_primary)
+
+
 @pytest.mark.parametrize("min_match", [5, 8, 9, 13])
 def test_jump_min_match(tx, min_match):
 	"""--jump-min-match INT, the minimum matching length to create a jump: a read is extended across

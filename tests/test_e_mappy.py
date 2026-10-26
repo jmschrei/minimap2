@@ -236,6 +236,37 @@ def test_seq_argument_builds_a_one_sequence_index(mappy, synth, wd):
 		assert (h.cigar_str, h.NM, h.mlen, h.blen, h.is_primary) == ("%dM" % (en - st), 0, en - st, en - st, True)
 
 
+
+def test_seq_argument_keeps_the_preset_hpc(mappy, tmp_path):
+	"""Aligner(seq=, preset=) indexes the sequence with the preset's -k, -w and -H (minimap2.1: map-pb
+	uses homopolymer-compressed minimizers, -Hk19). A 6 kbp sequence of short homopolymer runs and a
+	read of 300 runs from it with every run lengthened by 1-3 bases share no exact 19-mer, but their HPC
+	sequences are identical: with -H the read maps at its origin over at least 95% of its length (the
+	ends, where a lengthened run costs a gap, may be clipped), exactly as with an Aligner built from the
+	same sequence as a FASTA file; without -H (map-ont) it does not map."""
+	rng = H.Rng(77)
+	runs = []
+	while sum(n for _, n in runs) < 6000:
+		c = rng.choice("ACGT")
+		if runs and runs[-1][0] == c:
+			continue
+		runs.append((c, rng.randint(1, 3)))
+	s = "".join(c * n for c, n in runs)
+	lo = len("".join(c * n for c, n in runs[:1000]))
+	read = "".join(c * (n + rng.randint(1, 3) if i % 2 == 0 else n) for i, (c, n) in enumerate(runs[1000:1300]))
+	hi = lo + len("".join(c * n for c, n in runs[1000:1300]))
+	fa = H.write_fasta(str(tmp_path / "hp.fa"), [("N/A", s)])
+	for preset, maps in (("map-pb", True), ("map-ont", False)):
+		a = mappy.Aligner(seq=s, preset=preset)
+		hits = [(h.r_st, h.r_en, h.q_st, h.q_en, h.strand) for h in a.map(read)]
+		if maps:
+			r_st, r_en, q_st, q_en, strand = hits[0]
+			assert strand == 1 and abs(r_st - lo) <= 12 and abs(r_en - hi) <= 12 and q_en - q_st >= 0.95 * len(read), hits
+			assert hits == [(h.r_st, h.r_en, h.q_st, h.q_en, h.strand) for h in mappy.Aligner(fa, preset=preset).map(read)]
+		else:
+			assert hits == [], hits
+
+
 # ---------------------------------------------------------------------------
 # map() and Alignment fields
 # ---------------------------------------------------------------------------
@@ -671,8 +702,10 @@ def test_pairs_seq2_and_read_num(mappy, synth, wd):
 	mate of pairs from unique sequence lands at its truth (within 3 bp) on opposite strands, and every
 	alignment's contig, reference interval, strand, MAPQ, primary flag, CIGAR, NM, mlen and blen equal the
 	command line's /1 and /2 PAF lines (query interval and cs for mate 2 only when the alignment covers the
-	whole mate; known-bugs/e-mappy-mate2-query-coords.md)."""
-	pairs = H.simulate_pairs(synth.genome, 30, seed=508, insert_mean=300, insert_sd=30, unique=True)
+	whole mate; known-bugs/e-mappy-mate2-query-coords.md). Mates are 140-160 bp, so mappy's reverse
+	complement of mate 2 meets odd and even lengths."""
+	pairs = H.simulate_pairs(synth.genome, 30, seed=508, read_length=(140, 160), insert_mean=300, insert_sd=30, unique=True)
+	assert len(set(len(p.r2.seq) % 2 for p in pairs)) == 2
 	f1, f2 = H.write_pairs(str(wd / "p1.fq"), str(wd / "p2.fq"), pairs)
 	paf = {}
 	for p in H.map_reads(synth.fasta, [f1, f2], ["-c", "--secondary=yes", "--no-hash-name", "--cs"], preset="sr").paf():

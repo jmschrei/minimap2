@@ -76,7 +76,7 @@ CC=$E/bin/clang CPATH=$E/include LIBRARY_PATH=$E/lib LD_LIBRARY_PATH=$E/lib \
 | `MINIMAP2_BIN` | build from source | binary under test |
 | `MINIMAP2_TEST_SRC_DIR` | repository root | source tree to build minimap2, `libminimap2.a`, `make extra`, mappy and the C drivers from, and to take `misc/` and `python/minimap2.py` from |
 | `CC` | `gcc` | compiler for the build, the C drivers and mappy |
-| `MINIMAP2_TEST_MAKE_ARGS` | unset | extra `make` arguments, e.g. `sse2only=1` or `asan=1` (part of the cache key) |
+| `MINIMAP2_TEST_MAKE_ARGS` | unset | extra `make` arguments, e.g. `sse2only=1` or `asan=1` (part of the cache key; with `asan=1` or `tsan=1` the C drivers are compiled with the same `-fsanitize` flag; mappy is not instrumented) |
 | `MINIMAP2_TEST_MAKE_JOBS` | 4 | `make -j` (and `build_ext -j`) |
 | `MINIMAP2_TEST_CACHE_DIR` | `$XDG_CACHE_HOME/minimap2-tests` or `~/.cache/minimap2-tests` | build cache |
 | `MINIMAP2_TEST_THREADS` | 1 | `-t` for tests that do not set it themselves |
@@ -147,7 +147,8 @@ generator is splitmix64 in integer arithmetic; never use `random` or
 * `simulate_spliced_pairs(genome, n, read_length, insert_mean, insert_sd, stranded)`: paired RNA-seq reads (FR on the transcript) for splice:sr, each mate with the same truth fields. `transcript_blocks(gene, a, b)` maps a transcript interval to genome blocks.
 * `simulate_chimeric_reads(genome, n, profile, length, parts, min_part, min_distance)`: pieces from distant loci; one `Segment` per piece with its `qstart/qend`.
 * `simulate_contigs(genome, n, length, seed, inversions, inversion_len)`: assembly-like contigs (about 0.1% divergence) with optional inverted pieces (segments adjacent on the reference, alternating strands).
-* `Rng(seed)`: `u64 below randint random chance choice normal_int dna fork`.
+* `Rng(seed)`: `u64 below randint random chance choice normal_int dna fork`;
+  `dna(n, alphabet)` takes an alphabet of any size.
 
 I/O: `write_fastx/write_fasta/write_fastq(path, records)` (format and gzip
 from the extension; gzip bytes are stable), `write_pairs(p1, p2, pairs,
@@ -188,15 +189,25 @@ Recomputation from the genome (seq in reference orientation, soft clips
 included): `compute_nm`, `compute_md` (spec form; `md_as_minimap2()` drops
 the final 0 the way minimap2 does), `compute_cs(..., long_form)`,
 `compute_mlen_blen` (PAF columns 10/11 and nn:i), `compute_de` (de:f),
-`cigar_score(..., a, b, q, e, q2, e2, sc_ambi)` (the two-piece affine score
-of the usage text), `cigar_ref_span`, `cigar_query_span`, `cigar_clips`,
+`cigar_score(..., a, b, q, e, q2, e2, sc_ambi, transition)` (the two-piece
+affine score of the usage text; `transition` is `-b`), `cigar_ref_span`, `cigar_query_span`, `cigar_clips`,
 `strip_clips` (cg:Z from a SAM CIGAR), `parse_cigar`, `revcomp`, `nt4`,
 `tlen_5prime`, `tlen_outer`, `placement_error(rec, read)`,
-`paf_placement_error(rec, read)`, `paf_query_part(rec, read)`. Generic
+`paf_placement_error(rec, read)`, `paf_query_part(rec, read)`. `cs_is_long(cs)` tells the two cs:Z forms apart. Generic
 checks returning a list of problems: `sam_invariant_errors(sam, genome,
 reads)` (header, one primary per segment, SEQ, CIGAR span, NM/MD/cs),
 `paf_invariant_errors(paf, genome, reads)` (columns, cg spans, columns
 10/11, nn, NM/MD/cs/de) and `pair_invariant_errors(sam)`.
+
+Reference minimizers and indexes: `kmer_hash(key, k)` (minimap2's
+invertible hash on 2k bits), `kmer_runs(seq, k, hpc)` (canonical k-mers as
+`Kmer(x, pos, strand)` with `x = hash << 8 | span`, one list per run of
+A/C/G/T/U; odd k only), `SketchRef(seq, w, k, hpc)` (`.windows`,
+`.has_ties`, `.minimizers()`: every minimum of every window of w k-mers),
+`minimizers(seq, w, k, hpc, ties=True)` -> `[(pos, hash, strand)]`,
+`expected_index(seqs, w, k, hpc)` -> `{hash: positions}`, and
+`read_mmi(path, header_only=False)` -> `[MmiPart]` (`w k b flag names
+lengths minimizers seq4`) for the `.mmi` format.
 
 Pins: `check_pinned(name, text)` compares with `pins/<name>` (gzip when the
 name ends in `.gz`) and shows a diff; `strip_pg(sam)` drops the `@PG` line
@@ -343,6 +354,20 @@ terms: no test may depend on editing it.
   QUAL `*` (`--secondary-seq`: the aligned part, hard-clipped);
   supplementary alignments are hard-clipped unless `-Y`; the primary of a
   split read lists the others in SA:Z with approximate CIGARs.
+* Secondary alignments may be written below the `-p` ratio (base
+  behaviour; see Rules): `mm_select_sub` keeps a secondary scoring within 2k
+  of its primary and, on single-end reads, one on the other strand whose
+  chaining score is above 0.8 times `-g` (with `-c`, only if its divergence is
+  low); for read pairs `mm_select_sub_multi` keeps a secondary near its
+  primary (within both read lengths plus the fragment gap) above 0.2 of the
+  primary's score. Tests choose copies whose scores differ by more than 2k.
+* ksw2 at a narrow band: with a band `w` close to |qlen - tlen| the kernels
+  can report a score above the banded optimum and a CIGAR that leaves the
+  band (base behaviour; see Rules); `test_b_ksw.py` pins those results
+  instead of asserting them.
+* Batch boundaries of the sequence reader (bseq.c) do not change the
+  output; tests check only record order and that mates stay in one batch in
+  fragment mode.
 * Unmapped reads: a SAM line with flag 4 (not with `--sam-hit-only`); PAF
   leaves them out unless `--paf-no-hit`, which writes `name qlen 0 0 * * 0
   0 0 0 0 0 rl:i:N`.
