@@ -77,6 +77,15 @@ def test_preset_applied_first(small):
 	assert a.stdout == b.stdout and a.stdout != c.stdout and len(a.paf()) >= 8
 
 
+def test_long_option_names(small):
+	"""--sam is -a and --mb-size is -K (long names in main.c's option table)."""
+	fa, fq, _ = small
+	assert H.strip_pg(H.map_reads(fa, fq, ["--sam"]).stdout) == H.strip_pg(H.map_reads(fa, fq, ["-a"]).stdout)
+	a = H.map_reads(fa, fq, ["-a", "--mb-size", "2k"])
+	b = H.map_reads(fa, fq, ["-a", "-K", "2k"])
+	assert H.strip_pg(a.stdout) == H.strip_pg(b.stdout) and D.body_lines(a.stdout)
+
+
 @pytest.mark.parametrize("preset", ["foo", "asm7", "", "map_ont", "MAP-ONT"])
 def test_unknown_preset(small, preset):
 	"""An unknown preset (e.g. -x foo or -x asm7) is an error: exit 1, a message naming it and no output."""
@@ -288,6 +297,8 @@ def test_address_space_limit_is_lifted(small):
 	soft, hard = resource.getrlimit(resource.RLIMIT_AS)
 	if hard != resource.RLIM_INFINITY:
 		pytest.skip("the hard RLIMIT_AS is limited here")
+	if any(a.startswith(("asan", "tsan", "ubsan")) for a in minimap2_build.make_args()):
+		pytest.skip("sanitizer runtimes reserve address space before main()")
 
 	def limit():
 		resource.setrlimit(resource.RLIMIT_AS, (40 << 20, resource.RLIM_INFINITY))

@@ -7,6 +7,8 @@ genome and the simulated reads; one run of an option is compared with the defaul
 documentation says the option changes only one thing.
 """
 
+import re
+
 import pytest
 
 import helpers_d as D
@@ -50,6 +52,33 @@ def test_header_lines(synth, mixed, base_sam):
 	assert pg["ID"] == "minimap2" and pg["PN"] == "minimap2" and pg["VN"] == D.mm_version()
 	assert pg["CL"] == "minimap2 " + " ".join(base_sam.argv[1:])
 	assert head[-1].startswith("@PG\t") and len(head) == 2 + len(sam.sq)
+
+
+def test_read_group(synth, mixed, base_sam):
+	"""-R (minimap2.1, usage: a line like '@RG\\tID:foo\\tSM:bar'): the header gets the @RG line
+	with its escaped TABs turned into TABs, and every record, unmapped and secondary ones included,
+	carries RG:Z with the ID; nothing else changes. PAF has no read groups and is unchanged. An
+	ID of 255 characters is accepted, 256 is an error ("@RG:ID is longer than 255 characters"),
+	as are a line not starting with @RG, a literal TAB, and a line without ID: exit 1 with a
+	message and no records."""
+	fa, fq = base_sam.argv[-2], mixed[1]
+	r = H.map_reads(fa, fq, ["-a", "-R", "@RG\\tID:grp1\\tSM:sample 1\\tLB:lib"])
+	sam = r.sam()
+	assert sam.rg == [{"ID": "grp1", "SM": "sample 1", "LB": "lib"}]
+	assert [l for l in D.lines(r.stdout) if l.startswith("@RG")] == ["@RG\tID:grp1\tSM:sample 1\tLB:lib"]
+	assert len(sam.records) == len(_records(base_sam.stdout))
+	for g, b in zip(sam.records, _records(base_sam.stdout)):
+		assert g.tags["RG"] == "grp1" and D.drop_tag(g.line, "RG") == b.line
+	head = [l for l in D.lines(r.stdout) if l.startswith("@") and not l.startswith(("@RG", "@PG"))]
+	assert head == [l for l in D.lines(base_sam.stdout) if l.startswith("@") and not l.startswith("@PG")]
+	paf = H.map_reads(fa, fq, ["-R", "@RG\\tID:grp1"])
+	assert paf.stdout == H.map_reads(fa, fq).stdout
+	long_id = "x" * 255
+	r = H.map_reads(fa, fq, ["-a", "-R", "@RG\\tID:" + long_id + "\\tSM:s"])
+	assert all(x.tags["RG"] == long_id for x in r.sam().records)
+	for bad in ("@RG\\tID:" + "x" * 256, "RG\\tID:a", "@RG\tID:a", "@RG\\tSM:a"):
+		e = H.map_reads(fa, fq, ["-a", "-R", bad], check=False)
+		assert e.returncode == 1 and e.messages and D.body_lines(e.stdout) == [], bad
 
 
 def test_every_read_has_one_primary_and_consistent_records(synth, mixed, base_sam):
@@ -185,6 +214,8 @@ def test_supplementary_and_sa(synth, mixed, base_sam):
 				assert _approx_cigar_ok(e, o, len(seq)), (e, o.cigar)
 		truth = set((c, st) for c, s, e, st in m.spans[name])
 		assert set((r.rname, r.strand) for r in recs) <= truth
+		if "N" in seq:
+			assert all(r.tags["nn"] > 0 for r in recs)
 	for name in m.names("unique") + m.names("repeat"):
 		assert all("SA" not in r.tags for r in by[name])
 
@@ -370,6 +401,56 @@ def test_ds_tag(synth, mixed, base_sam):
 
 
 @pytest.fixture(scope="module")
+def end_reads(synth, tmp_path_factory):
+	"""Error-free 120-bp reads from unique sequence with substitutions placed at the read ends (first,
+	second, last or second-to-last base, or both ends); -x sr's end bonus extends alignments over
+	them, so tags start or end with a mismatch or a one-base match."""
+	reads = H.simulate_reads(synth.genome, 24, length=120, seed=611, sub_rate=0.0, indel_rate=0.0, unique=True, unique_pad=50)
+	recs = []
+	for i, r in enumerate(reads):
+		s = list(r.fwd_seq)
+		n = len(s)
+		for p in [(1,), (n - 2,), (0,), (n - 1,), (1, n - 2), (2, n - 3)][i % 6]:
+			s[p] = "A" if s[p] != "A" else "C"
+		fwd = "".join(s)
+		recs.append((r.name, fwd if r.strand == "+" else H.revcomp(fwd), r.qual))
+	fq = H.write_fastq(str(tmp_path_factory.mktemp("d_ends") / "ends.fq"), recs)
+	return fq, dict((n, [q]) for n, q, _ in recs)
+
+
+@pytest.mark.parametrize("opt,tag", [("--MD", "MD"), ("--cs", "cs"), ("--cs=long", "cs"), ("--ds", "ds"), ("--eqx", None)])
+def test_tags_at_read_ends(synth, end_reads, opt, tag):
+	"""MD:Z, cs:Z (short and long), ds:Z and --eqx CIGARs of alignments that start or end with a
+	mismatch or a one-base match equal their recomputation from the genome (the first or last
+	number of MD may be 0 or 1; MD omits a final 0, known-bugs/md-trailing-zero.md)."""
+	fq, reads = end_reads
+	sam = H.map_reads(synth.fasta, fq, ["-a", opt], preset="sr").sam()
+	# sam_invariant_errors takes a cs:Z for the long form only if it starts with '=', so a long cs
+	# starting with a mismatch is checked here instead
+	long_cs = opt == "--cs=long"
+	assert H.sam_invariant_errors(sam, synth.genome, reads, check_tags=("NM", "MD") if long_cs else ("NM", "MD", "cs")) == []
+	recs = [r for r in sam.records if r.is_primary]
+	assert len(recs) == len(reads) and all(not r.is_unmapped and "S" not in r.cigar for r in recs)
+	vals = [r.tags[tag] for r in recs] if tag else [r.cigar for r in recs]
+	for r, v in zip(recs, vals):
+		s = D.record_seq(r, reads[r.qname][0])
+		ref = synth.genome[r.rname]
+		if tag == "ds":
+			assert v == D.expected_ds(ref, r.pos0, s, r.cigar)
+		elif long_cs:
+			assert v == H.compute_cs(ref, r.pos0, s, r.cigar, long_form=True)
+		elif tag is None:
+			assert v == D.eqx_cigar(ref, r.pos0, s, D.merge_eqx(v))
+	if tag == "MD":
+		assert any(re.search(r"[A-Z]1$", v) for v in vals) and any(v.startswith("0") for v in vals)
+		assert any(re.match(r"^1[A-Z]", v) for v in vals) and any(re.search(r"[A-Z]$", v) for v in vals)
+	elif tag is None:
+		assert any(v.startswith("1X") for v in vals) and any(v.endswith("X1=") for v in vals)
+	else:
+		assert any(v.startswith("*") for v in vals) and any(v[-3] == "*" or v.endswith("*" + v[-2:]) for v in vals)
+
+
+@pytest.fixture(scope="module")
 def three_seg(synth, tmp_path_factory):
 	"""Templates of three segments: --frag=yes groups adjacent reads with the same name."""
 	g = synth.genome
@@ -391,11 +472,12 @@ def three_seg(synth, tmp_path_factory):
 
 def test_three_segment_template(synth, three_seg):
 	"""With --frag=yes, adjacent reads of one name form a template of three segments (SAM spec
-	1.4): every record has FLAG 0x1 and FI:i (the segment index); the first segment has 0x40
-	and the last 0x80; RNEXT/PNEXT give the next segment's primary position, the first segment
-	being next after the last; 0x8 and 0x20 follow that next segment; an unmapped segment is
-	placed at the position of a mapped segment of its template; mapped segments lie at the
-	truth. PAF names the segments name/1, name/2 and name/3."""
+	1.4): every record has FLAG 0x1 and FI:i (the segment index); the first segment has 0x40 and
+	not 0x80, the last 0x80 and not 0x40 (the middle one: known-bugs/d-middle-segment-flags.md);
+	RNEXT/PNEXT give the next segment's primary position, the first segment being next after the
+	last; 0x8 and 0x20 follow that next segment; an unmapped segment is placed at the position of
+	a mapped segment of its template; mapped segments lie at the truth. PAF names the segments
+	name/1, name/2 and name/3."""
 	fq, truth = three_seg
 	sam = H.map_reads(synth.fasta, fq, ["-a", "--frag=yes"]).sam()
 	by = sam.by_qname()
@@ -406,9 +488,8 @@ def test_three_segment_template(synth, three_seg):
 		assert [r.tags["FI"] for r in prim] == [0, 1, 2]
 		for i, r in enumerate(prim):
 			assert r.flag & 0x1
-			assert bool(r.flag & 0x40) == (i == 0)
-			if i == 2:
-				assert r.flag & 0x80
+			if i != 1:  # the middle segment: known-bugs/d-middle-segment-flags.md
+				assert bool(r.flag & 0x40) == (i == 0) and bool(r.flag & 0x80) == (i == 2)
 			nxt = prim[(i + 1) % 3]
 			if nxt.is_unmapped:
 				assert r.flag & 0x8 and (r.rnext, r.pnext) == ("=", r.pos)

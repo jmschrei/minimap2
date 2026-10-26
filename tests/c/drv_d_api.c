@@ -130,6 +130,7 @@ static int case_macros(int argc, char *argv[])
  * the documented preset names, and presets touching only their own parameters */
 static int case_set_opt(int argc, char *argv[])
 {
+	/* the presets of minimap2.1 and the usage text, plus lr:hqae (options.c) */
 	static const char *presets[] = { "map-ont", "lr:hq", "lr:hqae", "map-hifi", "map-pb", "map-iclr", "asm5", "asm10", "asm20",
 		"splice", "splice:hq", "splice:sr", "sr", "ava-pb", "ava-ont", 0 };
 	static const char *bad[] = { "foo", "asm7", "asm", "", "map-ont ", "MAP-ONT", "map_ont", "splice:lr", "srr", 0 };
@@ -166,7 +167,7 @@ static int case_set_opt(int argc, char *argv[])
 	memset(&mo2, 0xab, sizeof(mo2));
 	mm_mapopt_init(&mo2);
 	MMT_CHECK(memcmp(&mo, &mo2, sizeof(mo)) == 0);
-	/* documented presets are accepted; unknown names return -1 */
+	/* presets are accepted; unknown names return -1 */
 	for (i = 0; presets[i]; ++i) {
 		mm_set_opt(0, &io, &mo);
 		MMT_CHECKF(mm_set_opt(presets[i], &io, &mo) == 0, "preset '%s' rejected", presets[i]);

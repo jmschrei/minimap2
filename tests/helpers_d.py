@@ -38,7 +38,7 @@ class Mixed(object):
 	Kinds: 'unique' (ONT-like from unique sequence), 'ambig' (HiFi-like with N bases and a
 	lowercase stretch), 'lowcomp' (covering a low-complexity tract, so rl:i > 0), 'repeat' (an
 	exact copy of one repeat unit, so secondary hits), 'chimeric' (two distant pieces, so a
-	supplementary hit) and 'random' (no hit).
+	supplementary hit; the first one has three N bases in each piece) and 'random' (no hit).
 	"""
 
 	def __init__(self):
@@ -100,8 +100,15 @@ def mixed_reads(genome):
 			copies = [(g.contig, g.start + 5, g.end - 5) for g in fams[fam]]
 			m.add("rep%d" % j, seq, _qual(rng, len(seq)), "repeat", None, None, [(c, s, e, "?") for c, s, e in copies])
 			j += 1
-	for r in H.simulate_chimeric_reads(genome, 4, profile="hifi", seed=503, length=(3000, 6000), min_part=1000):
-		m.add("chim%s" % r.name[4:], r.seq, r.qual, "chimeric", "BC:Z:CH" if r.name.endswith("1") else None, r,
+	for k, r in enumerate(H.simulate_chimeric_reads(genome, 4, profile="hifi", seed=503, length=(3000, 6000), min_part=1000)):
+		seq = r.seq
+		if k == 0:  # N bases in each piece: they count in NM, also in the NM of SA:Z
+			s = list(seq)
+			for g in r.segments:
+				for j in range(g.qstart + 300, g.qstart + 303):
+					s[j] = "N"
+			seq = "".join(s)
+		m.add("chim%s" % r.name[4:], seq, r.qual, "chimeric", "BC:Z:CH" if r.name.endswith("1") else None, r,
 			[(g.contig, g.pos, g.end, g.strand) for g in r.segments])
 	for i in range(2):
 		seq = rng.dna(1500)
