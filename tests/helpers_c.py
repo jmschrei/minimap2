@@ -18,8 +18,6 @@ and readers for what the tests need from them:
 	intron_bits         the bit pattern mm_idx_bed_junc() writes for introns
 """
 
-import os
-
 import minimap2_helpers as H
 
 
@@ -196,12 +194,3 @@ def intron_bits(introns, st, en):
 def encode_bits(d):
 	"""'pos:val,pos:val' for a C driver argument (empty string for nothing)."""
 	return ",".join("%d:%d" % (k, d[k]) for k in sorted(d))
-
-
-def write_reads(path, records):
-	"""FASTA or FASTQ of (name, seq) tuples or SimReads, chosen by the extension."""
-	return H.write_fastx(path, records)
-
-
-def tmp(tmp_path, name):
-	return str(tmp_path / name) if hasattr(tmp_path, "__truediv__") else os.path.join(str(tmp_path), name)

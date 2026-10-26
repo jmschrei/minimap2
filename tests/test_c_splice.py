@@ -164,8 +164,9 @@ def test_junc_bed_decides_a_tie(ties, strand):
 	9 by default, per splice site). Two GT-AG introns that align the read equally well (AS 568): with
 	either one annotated, both reads (sense and antisense) take the annotated intron with AS 568 + 2x9,
 	or 568 + 2x5 with --junc-bonus 5. As BED12 (a gene) or as a 6-column junction line the result is
-	the same; --junc-bonus 0 gives the output of no annotation; --junc-pen, effective with --spsc only,
-	changes nothing; -J0 also honours the annotation."""
+	the same; a junction line without a strand ('.' or no sixth column; minimap2.1: the strand column
+	is required) and --junc-bonus 0 give the output of no annotation; --junc-pen, effective with --spsc
+	only, changes nothing; -J0 also honours the annotation."""
 	loc = ties[strand]
 	d = ties["dir"]
 	base, _ = _tie_base(loc)
@@ -183,6 +184,10 @@ def test_junc_bed_decides_a_tie(ties, strand):
 		assert j5 == {"sense": ((iv,), 578, "+"), "anti": ((iv,), 578, "-")}
 		j0 = H.map_reads(loc.fasta, loc.reads, ["-a", "--junc-bed", bed6, "--junc-bonus", "0"], preset="splice")
 		assert H.sam_body(j0.stdout) == H.sam_body(base.stdout)
+		for name, line in (("dot", "chr1\t%d\t%d\tj\t0\t.\n"), ("five", "chr1\t%d\t%d\tj\t0\n")):
+			nostrand = H.write_text(str(d / ("%s%s%s.bed" % (which, strand, name))), line % iv)
+			res = H.map_reads(loc.fasta, loc.reads, ["-a", "--junc-bed", nostrand], preset="splice")
+			assert H.sam_body(res.stdout) == H.sam_body(base.stdout), name
 		jj = _junctions(H.map_reads(loc.fasta, loc.reads, ["-a", "-J0", "--junc-bed", bed6], preset="splice"))
 		assert jj == {"sense": ((iv,), 586, "+"), "anti": ((iv,), 586, "-")}
 
@@ -229,6 +234,17 @@ def test_spsc_scores_decide_a_tie(ties, strand):
 	a = H.map_reads(loc.fasta, loc.reads, ["-a", "--spsc", other], preset="splice")
 	b = H.map_reads(loc.fasta, loc.reads, ["-a", "--spsc", other, "--junc-bonus", "20"], preset="splice")
 	assert H.sam_body(a.stdout) == H.sam_body(b.stdout)
+
+
+def test_spsc_scores_are_capped(ties):
+	"""Scores beyond what the scoring system allows are capped at mm_max_spsc_bonus(): with
+	--spsc-scale 1 a donor and an acceptor scored 100 add 2 x 30 to AS under -x splice (-O2,32) and
+	2 x 18 under -x splice:hq (-O6,24), whose unscored AS is 600 - 24 = 576."""
+	loc = ties["+"]
+	f = _spsc_file(str(ties["dir"]) + "/cap.tsv", [("chr1", loc.A[0], "+", "D", 100), ("chr1", loc.A[1], "+", "A", 100)])
+	for preset, as_ in (("splice", 568 + 60), ("splice:hq", 576 + 36)):
+		j = _junctions(H.map_reads(loc.fasta, loc.reads, ["-a", "--spsc", f, "--spsc-scale", "1"], preset=preset))
+		assert j == {"sense": ((loc.A,), as_, "+"), "anti": ((loc.A,), as_, "-")}, preset
 
 
 def test_splice_flank_under_J0(tmp_path):

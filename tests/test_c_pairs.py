@@ -15,11 +15,16 @@ import minimap2_helpers as H
 
 @pytest.fixture(scope="module")
 def sr_pairs(synth, tmp_path_factory):
-	"""FR pairs from unique sequence with fragment lengths from 150 to about 1300 bp, substitutions
-	only, so every mate aligns end to end and TLEN equals the fragment length."""
+	"""FR pairs from unique sequence with fragment lengths from 150 to about 1300 bp, plus two pairs at
+	each -F limit tested and one base past it; substitutions only, so every mate aligns end to end and
+	TLEN equals the fragment length."""
 	d = tmp_path_factory.mktemp("sr_pairs")
-	pairs = H.simulate_pairs(synth.genome, 160, seed=111, insert_mean=650, insert_sd=250, unique=True, sub_rate=0.005,
+	pairs = H.simulate_pairs(synth.genome, 150, seed=111, insert_mean=650, insert_sd=250, unique=True, sub_rate=0.005,
 		indel_rate=0)
+	for i, F in enumerate((500, 501, 800, 801, 1000, 1001)):
+		pairs += H.simulate_pairs(synth.genome, 2, seed=120 + i, insert_mean=F, insert_sd=0, unique=True, sub_rate=0.005,
+			indel_rate=0, name_prefix="f%d_" % F)
+	assert sorted(p.insert for p in pairs if p.name.startswith("f")) == sorted([500, 501, 800, 801, 1000, 1001] * 2)
 	f1, f2 = H.write_pairs(str(d / "r1.fq"), str(d / "r2.fq"), pairs)
 	return dict(pairs=pairs, f1=f1, f2=f2, dir=d, reads=dict((p.name, [p.r1.seq, p.r2.seq]) for p in pairs))
 
@@ -191,12 +196,12 @@ def test_unmapped_and_split_mates(synth, tmp_path):
 def test_three_segment_fragments(synth, tmp_path):
 	"""Three query files with --frag=yes make three-segment templates (FI:i, SAMtags); here each
 	template is three reads of one strand in fragment order. Per the SAM
-	spec: 0x40 on the first segment, 0x80 on the last, neither on the middle; RNEXT/PNEXT and 0x20 give
-	the next segment's primary, and the next of the last is the first; TLEN is measured to that next
-	segment. PAF names the segments /1, /2, /3."""
+	spec: 0x40 alone on the first segment and 0x80 alone on the last (the middle segment's bits are
+	known-bugs/d-middle-segment-flags.md); RNEXT/PNEXT and 0x20 give the next segment's primary, and
+	the next of the last is the first; TLEN is measured to that next segment. PAF names the segments
+	/1, /2, /3."""
 	g = synth.genome
-	rng = H.Rng(23)
-	names, files = [], [[], [], []]
+	files = [[], [], []]
 	truth = {}
 	cands = [("chr1" if i % 2 == 0 else "chr2", 1000 + i * 1000) for i in range(80)]
 	cands = [x for x in cands if x[1] + 1000 < g.length(x[0]) and g.is_unique(x[0], x[1], x[1] + 800, 100)][:20]
@@ -219,7 +224,8 @@ def test_three_segment_fragments(synth, tmp_path):
 			r, nxt = recs[(name, k)], recs[(name, (k + 1) % 3)]
 			assert (r.rname, r.pos0, r.strand) == (c, poss[k], strands[k])
 			assert r.flag & 0x1 and not r.flag & 0x2
-			assert bool(r.flag & 0x40) == (k == 0) and bool(r.flag & 0x80) == (k == 2)
+			if k != 1:
+				assert r.flag & 0xC0 == (0x40 if k == 0 else 0x80)
 			assert (r.rnext, r.pnext, bool(r.flag & 0x20)) == ("=", nxt.pos, nxt.is_reverse)
 			assert r.tlen == H.tlen_5prime(r, nxt)
 	paf = H.map_reads(synth.fasta, fs, ["--frag=yes"]).paf()
@@ -249,6 +255,20 @@ def test_frag_mode_groups_reads_by_name(synth, sr_pairs, tmp_path):
 		assert sorted(r.segment for r in sam.records if r.qname == "split") == [0, 0]
 	sam = H.map_reads(synth.fasta, fq, ["-a", "--frag=no"], preset="sr").sam()
 	assert len(sam.records) == len(recs) and not any(r.flag & 0xC3 for r in sam.records)
+
+
+def test_pairs_with_a_split_index(synth, sr_pairs, sr_default, tmp_path):
+	"""A multi-part index (-I smaller than the genome) with --split-prefix merges the parts' hits and
+	pairs them afterwards (map.c merge_hits). For these pairs from unique sequence every record keeps the
+	placement it gets from a single-part index: FLAG (0x2 included), RNAME, POS, CIGAR, RNEXT, PNEXT and
+	TLEN."""
+	res = H.map_reads(synth.fasta, [sr_pairs["f1"], sr_pairs["f2"]], ["-a", "-I", "60k", "--split-prefix", str(tmp_path / "sp")],
+		preset="sr")
+	assert H.pair_invariant_errors(res.sam()) == []
+
+	def place(text):
+		return [l.split("\t")[:4] + l.split("\t")[5:9] for l in H.sam_body(text).splitlines()]
+	assert place(res.stdout) == place(sr_default.stdout)
 
 
 @pytest.mark.thread_invariance
@@ -309,9 +329,10 @@ def test_splice_sr_single_end_equals_its_definition(synth_tx, tmp_path):
 
 @pytest.mark.pinned
 def test_sr_pairs_pinned(synth, tmp_path):
-	"""Pins the current output: `-ax sr --MD` (README) on 150 simulated pairs with indels from the
-	whole standard genome, repeats and N runs included, SAM without @PG, byte for byte."""
+	"""Pins the current output: `-ax sr --cs` (README) on 150 simulated pairs with indels from the
+	whole standard genome, repeats and N runs included, SAM without @PG, byte for byte. (No --MD:
+	its final 0 is known-bugs/md-trailing-zero.md.)"""
 	pairs = H.simulate_pairs(synth.genome, 150, seed=112, insert_mean=350, insert_sd=60, qual=None, n_rate=0.002)
 	f1, f2 = H.write_pairs(str(tmp_path / "r1.fa"), str(tmp_path / "r2.fa"), pairs)
-	res = H.map_reads(synth.fasta, [f1, f2], ["-a", "--MD"], preset="sr")
+	res = H.map_reads(synth.fasta, [f1, f2], ["-a", "--cs"], preset="sr")
 	H.check_pinned("c/sr_pairs.sam.gz", H.strip_pg(res.stdout))

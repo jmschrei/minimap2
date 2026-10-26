@@ -5,8 +5,6 @@ mm_idx_jump_get in index.c) and the two-pass workflow of README.md.
 Truth comes from the simulated gene models of the standard transcript genome
 (conftest.make_synth_tx) and from hand-built loci (helpers_c)."""
 
-import os
-
 import pytest
 
 import helpers_c as C
