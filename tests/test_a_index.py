@@ -223,7 +223,8 @@ def test_dump_while_mapping(clean, tmp_path):
 def test_mmi_round_trip(clean, synth, tmp_path, index_of):
 	"""An index loaded and dumped again (`minimap2 -d b.mmi a.mmi`, and mm_idx_load/mm_idx_dump through
 	the API) holds the same header, names, lengths, sequence and minimizer table. (The hash tables are
-	written in table order, so the bytes may differ.)"""
+	written in table order, so the bytes may differ.) Neither mm_idx_is_idx nor mm_idx_load takes a FASTA
+	file, an empty file, a file shorter than the magic or an index whose magic has another version byte."""
 	for fa, src in ((clean.fasta, None), (synth.fasta, index_of(synth.genome, "map-pb"))):
 		a = src or _dump(fa, tmp_path / "a.mmi")
 		b = _dump(a, tmp_path / "b.mmi")
@@ -232,7 +233,12 @@ def test_mmi_round_trip(clean, synth, tmp_path, index_of):
 			assert getattr(pa, f) == getattr(pb, f), f
 	empty = A.write_fa(tmp_path / "empty.txt", [])
 	short = H.write_text(str(tmp_path / "short.bin"), "MMI")
-	H.assert_c_case("drv_a_index", "dump_load", clean.fasta, tmp_path / "c1.mmi", tmp_path / "c2.mmi", clean.fasta, empty, short)
+	with open(_dump(clean.fasta, tmp_path / "v.mmi"), "rb") as f:
+		data = f.read()
+	other = str(tmp_path / "v1.mmi")  # the same index marked as format version 1
+	with open(other, "wb") as f:
+		f.write(b"MMI\x01" + data[4:])
+	H.assert_c_case("drv_a_index", "dump_load", clean.fasta, tmp_path / "c1.mmi", tmp_path / "c2.mmi", clean.fasta, empty, short, other)
 	pa, pb = A.read_mmi(str(tmp_path / "c1.mmi"))[0], A.read_mmi(str(tmp_path / "c2.mmi"))[0]
 	for f in ("w", "k", "b", "flag", "names", "lengths", "seq4", "minimizers"):
 		assert getattr(pa, f) == getattr(pb, f), f

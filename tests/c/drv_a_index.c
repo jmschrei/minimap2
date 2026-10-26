@@ -13,7 +13,7 @@
  *
  *   reader <target> <w> <k> <hpc> <bucket_bits> <batch_size> <out> [fn_out]
  *   lookup <target> <seqs.fa> <has_dup>
- *   dump_load <target> <out1.mmi> <out2.mmi> <not_an_index> <empty> <short>
+ *   dump_load <target> <out1.mmi> <out2.mmi> <not_an_index>...
  *   idx_str
  *   build <seqs.fa> <w> <k> <hpc> <missing>
  *   gen <seqs.fa> <w> <k> <bucket_bits> <batch_size> <expected_parts> <mini_batch_size>
@@ -113,7 +113,7 @@ static void check_seqs(const mm_idx_t *mi, const mmt_seqs_t *s, const char *what
 	uint64_t off = 0;
 	int32_t max_len = 0;
 	for (i = 0; i < s->n; ++i) max_len = max_len > s->len[i]? max_len : s->len[i];
-	buf = (uint8_t*)malloc(max_len + 16);
+	buf = (uint8_t*)malloc(max_len + 128); // room for the unclipped end a faulty mm_idx_getseq() would write
 	MMT_CHECK_INT(mi->n_seq, ==, s->n);
 	for (i = 0; i < s->n && i < (int32_t)mi->n_seq; ++i) {
 		int32_t L = s->len[i], st, en;
@@ -265,8 +265,8 @@ static int same_index(const mm_idx_t *a, const mm_idx_t *b, const mmt_seqs_t *s)
 	return ok;
 }
 
-/* args: <target.fa> <out1.mmi> <out2.mmi> <not_an_index> <empty> <short>: dump, load, dump again; the
- * other three files are not indexes (a FASTA, an empty file, a 3-byte "MMI") */
+/* args: <target.fa> <out1.mmi> <out2.mmi> <not_an_index>...: dump, load, dump again; the other files
+ * are not indexes (e.g. a FASTA, an empty file, a 3-byte "MMI", an index of another format version) */
 static int case_dump_load(int argc, char *argv[])
 {
 	mm_idx_reader_t *r;
@@ -274,7 +274,7 @@ static int case_dump_load(int argc, char *argv[])
 	mmt_seqs_t s;
 	FILE *fp;
 	int i;
-	if (argc < 6) return MMT_FAIL("usage: dump_load <target.fa> <out1.mmi> <out2.mmi> <not_an_index> <empty> <short>"), 1;
+	if (argc < 4) return MMT_FAIL("usage: dump_load <target.fa> <out1.mmi> <out2.mmi> <not_an_index>..."), 1;
 	MMT_REQUIRE(mmt_read_seqs(argv[0], &s) > 0);
 	r = mm_idx_reader_open(argv[0], 0, 0);
 	MMT_REQUIRE(r != 0);
@@ -299,7 +299,7 @@ static int case_dump_load(int argc, char *argv[])
 	fclose(fp);
 	mm_idx_destroy(mi);
 	mm_idx_destroy(mi2);
-	for (i = 3; i <= 5; ++i) { // not indexes
+	for (i = 3; i < argc; ++i) { // not indexes
 		MMT_CHECKF(mm_idx_is_idx(argv[i]) == 0, "mm_idx_is_idx(%s) = %ld", argv[i], (long)mm_idx_is_idx(argv[i]));
 		MMT_REQUIRE((fp = fopen(argv[i], "rb")) != 0);
 		MMT_CHECKF(mm_idx_load(fp) == 0, "mm_idx_load(%s) returned an index", argv[i]);

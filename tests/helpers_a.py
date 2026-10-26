@@ -19,7 +19,6 @@ Standard library only.
 
 import bisect
 import collections
-import os
 import struct
 
 import minimap2_helpers as H

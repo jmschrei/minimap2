@@ -14,7 +14,6 @@ is not a window minimum; and the minimizer of the last window before an
 ambiguous base is never written.
 """
 
-import os
 
 import pytest
 
@@ -112,7 +111,8 @@ def test_hpc_minimizers_on_homopolymer_rich_sequence(tmp_path):
 def test_minimizers_with_tied_kmers(tmp_path):
 	"""Low-complexity sequence where the smallest k-mer occurs several times in a window: after the first
 	window every occurrence of a window minimum is a minimizer and nothing else is; in the first window
-	every k-mer written is a real k-mer of the sequence and the rightmost minimum is written."""
+	every k-mer written is a real k-mer of the sequence and the rightmost minimum is written, and when the
+	window's last k-mer is not its minimum, every occurrence of the minimum is written."""
 	rng = H.Rng(41)
 	recs = []
 	for i in range(8):
@@ -120,7 +120,7 @@ def test_minimizers_with_tied_kmers(tmp_path):
 		s = (unit * 400)[:rng.randint(100, 600)]
 		s = H.mutate(rng, s, 0.05) + rng.dna(rng.randint(0, 200))
 		recs.append(("t%d" % i, s))
-	n_tied = 0
+	n_tied = n_first = 0
 	for w, k, hpc in ((10, 15, False), (5, 11, False), (19, 19, False), (10, 15, True)):
 		got = _dump(tmp_path, recs, w, k, hpc, tag="tie%d_%d_%d" % (w, k, hpc))
 		for i, (name, s) in enumerate(recs):
@@ -137,7 +137,11 @@ def test_minimizers_with_tied_kmers(tmp_path):
 			m = min(q.x for q in km[:w])
 			rightmost = [q for q in km[:w] if q.x == m][-1]
 			assert rightmost in got[i], (name, w, k, hpc)
-	assert n_tied >= 10
+			if km[w - 1].x > m:
+				mins = [q for q in km[:w] if q.x == m]
+				assert set(mins) <= set(got[i]), (name, w, k, hpc)
+				n_first += len(mins) > 1
+	assert n_tied >= 10 and n_first >= 3, (n_tied, n_first)
 
 
 def test_minimizers_around_ambiguous_bases(tmp_path):

@@ -60,6 +60,34 @@ def test_split_prefix_merges_a_multi_part_index(synth, split_reads, tmp_path):
 	assert os.listdir(os.path.dirname(pre)) == []
 
 
+def test_split_prefix_three_parts(tmp_path):
+	"""Six contigs (3, 5, 2, 7, 1 and 4 kbp) split by -I 6k into three parts: with --split-prefix each
+	read (1% substitutions) is reported once, as a primary on its own contig at its true place, the rid
+	of the second and third parts shifted past the earlier parts' sequences, and the SAM equals the one
+	from a single-part index."""
+	rng = H.Rng(621)
+	recs = [("p%d" % i, rng.dna(l)) for i, l in enumerate((3000, 5000, 2000, 7000, 1000, 4000))]
+	fa = A.write_fa(tmp_path / "six.fa", recs)
+	reads = []
+	for i, (n, s) in enumerate(recs):
+		for j in range(2):
+			st = 100 + 300 * j
+			q = H.mutate(rng, s[st:st + 600], 0.01)
+			reads.append(("r%d_%d" % (i, j), q if j == 0 else H.revcomp(q), n, st))
+	rf = H.write_fasta(str(tmp_path / "r.fa"), [(n, q) for n, q, _, _ in reads])
+	single = H.map_reads(fa, rf, ["-a"])
+	split = H.map_reads(fa, rf, ["-a", "-I", "6k", "--split-prefix", str(tmp_path / "three")])
+	sam = split.sam()
+	assert sam.sq == [(n, len(s)) for n, s in recs]
+	prim = sam.primaries()
+	assert len(prim) == len(reads) and len(sam.records) == len(reads)
+	for name, _, ctg, st in reads:
+		r = prim[(name, 0)]
+		assert (r.rname, r.unclipped_start0, r.is_reverse) == (ctg, st, name.endswith("_1")), r.line[:80]
+	assert H.sam_body(split.stdout) == H.sam_body(single.stdout)
+	assert not [f for f in os.listdir(str(tmp_path)) if f.startswith("three.")]
+
+
 def test_split_prefix_paired_reads(synth, split_reads, tmp_path):
 	"""Paired short reads (-x sr, two files) with a two-part index and --split-prefix: mates are merged
 	as pairs, with the flags, positions, CIGARs, mate fields and TLEN of the single-part mapping and
