@@ -404,7 +404,64 @@ terms: no test may depend on editing it.
 
 ## Coverage
 
-Not measured yet; see `TARGETS.md` for what each area covers.
+Line coverage of minimap2's C sources under the whole suite, measured on
+2026-10-26 with gcc 13 (`--coverage -fprofile-update=atomic -O0`),
+`MINIMAP2_TEST_THREADS=4` and Python 3.13 with Cython, without k8 (the
+paftools.js and pafcluster.js tests skipped): the command-line tests, the C
+drivers and mappy together run 5,470 of the 5,652 executable lines (96.8%),
+not counting the vendored `k*.h` headers (`sse2neon/` is not compiled on
+x86-64). A line counts once however many objects compile it (the ksw2
+kernels are built as SSE4.1 and SSE2 variants).
+
+| File | Lines | Run | Coverage |
+|:-----|------:|----:|---------:|
+| `align.c` | 830 | 805 | 97.0% |
+| `bseq.c` | 89 | 87 | 97.8% |
+| `bseq.h` | 18 | 18 | 100.0% |
+| `esterr.c` | 40 | 36 | 90.0% |
+| `example.c` | 36 | 36 | 100.0% |
+| `format.c` | 504 | 493 | 97.8% |
+| `hit.c` | 346 | 339 | 98.0% |
+| `index.c` | 666 | 661 | 99.2% |
+| `jump.c` | 149 | 149 | 100.0% |
+| `kalloc.c` | 114 | 108 | 94.7% |
+| `ksw2_dispatch.c` | 42 | 33 | 78.6% |
+| `ksw2_extd2_sse.c` | 268 | 249 | 92.9% |
+| `ksw2_exts2_sse.c` | 311 | 271 | 87.1% |
+| `ksw2_extz2_sse.c` | 194 | 188 | 96.9% |
+| `ksw2_ll_sse.c` | 82 | 74 | 90.2% |
+| `kthread.c` | 68 | 68 | 100.0% |
+| `lchain.c` | 243 | 243 | 100.0% |
+| `main.c` | 361 | 356 | 98.6% |
+| `map.c` | 498 | 472 | 94.8% |
+| `misc.c` | 31 | 27 | 87.1% |
+| `mmpriv.h` | 7 | 7 | 100.0% |
+| `options.c` | 233 | 233 | 100.0% |
+| `pe.c` | 123 | 122 | 99.2% |
+| `python/cmappy.h` | 82 | 82 | 100.0% |
+| `sdust.c` | 106 | 106 | 100.0% |
+| `seed.c` | 86 | 85 | 98.8% |
+| `sketch.c` | 74 | 74 | 100.0% |
+| `splitidx.c` | 51 | 48 | 94.1% |
+
+Lines not run include the error exits of `mm_err_fwrite` and
+`mm_err_fread` (misc.c) and the SSE2 fallback in `ksw2_dispatch.c`, which a
+CPU with SSE4.1 never takes. Every function declared in minimap.h is called
+by a C driver and every macro is used by a test; the only public name no
+test uses is the global `mm_realtime0`, which only offsets the times printed
+on stderr. Every name of the mappy
+module (`Aligner` with its arguments and properties, `Alignment` with its
+fields, `ThreadBuffer`, `fastx_read`, `revcomp`, `verbose`, `__version__`) is
+used by `test_e_mappy.py`.
+
+To measure it again: run the suite with `CC="gcc --coverage
+-fprofile-update=atomic"`, `MINIMAP2_TEST_MAKE_ARGS="'CFLAGS=-g -O0 -Wall'"`
+and `CFLAGS=-O0` (for mappy) in a fresh `MINIMAP2_TEST_CACHE_DIR`, then run
+gcovr on each `build-*` and `mappy-*` directory of the cache and merge the
+JSON reports. The harness compiles in a temporary directory that it then
+renames, so the `.gcda` files are written under the temporary path recorded
+at compile time: link that path to the build directory before the run, or
+move the files afterwards.
 
 ## Local setup for the 2026-10-26 speed search
 
