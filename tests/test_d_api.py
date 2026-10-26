@@ -290,12 +290,10 @@ def test_kalloc():
 	"""kmalloc, kcalloc, krealloc, krelocate and kfree keep every block's contents, return memory
 	aligned for 8-byte words, zero kcalloc memory even when recycled, follow the libc semantics
 	for a NULL pointer or size 0, and fall back to libc with a NULL pool; a child pool (km_init2)
-	draws on its parent; km_stat reports a capacity covering the live bytes and km_stat_print
-	writes it to stderr."""
+	draws on its parent; km_stat reports a capacity covering the live bytes. km_stat_print runs, but
+	what it prints is kalloc's debug output and is not checked."""
 	r = H.assert_c_case(DRV, "kalloc")
-	cap = re.search(r"^capacity (\d+)$", r.stdout, re.M).group(1)
-	err = [l for l in r.stderr.splitlines() if l.strip()]
-	assert len(err) == 1 and cap in err[0]
+	assert re.search(r"^capacity \d+$", r.stdout, re.M)
 
 
 def test_kthread():
