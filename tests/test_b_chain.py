@@ -53,6 +53,13 @@ def test_gap_cost_formula():
 	H.assert_c_case("drv_b_chain", "gap_cost")
 
 
+def test_band_edge():
+	"""The band (-r) is inclusive: runs whose diagonals differ by exactly bw form one chain, by bw+1 no
+	chain crosses between them (DP chaining and RMQ chaining with --rmq-inner 1000 at bw 100 and 333;
+	RMQ chaining with --rmq-inner 0 at bw 100)."""
+	H.assert_c_case("drv_b_chain", "band_edge")
+
+
 def test_min_count_and_score_filters():
 	"""-n and -m in the chaining functions: a 12-anchor chain scoring 125 survives min_cnt 12 and
 	min_sc 125 and is dropped at 13 or 126; no anchors give no chains."""

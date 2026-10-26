@@ -11,20 +11,20 @@ import minimap2_helpers as H
 @pytest.mark.parametrize("kind", [0, 1], ids=["extz2", "extd2"])
 def test_global_alignment_matches_reference(kind):
 	"""ksw_extz2_sse (affine, a k-long gap costs O+k*E) and ksw_extd2_sse (two-piece,
-	min{O1+k*E1, O2+k*E2}) in global mode: on 300 random pairs (substitutions, indels, N bases,
+	min{O1+k*E1, O2+k*E2}) in global mode: on 600 random pairs (substitutions, indels, N bases,
 	random scoring within ksw2's limits) the score equals the brute-force optimum; the CIGAR spans both
 	sequences and scores exactly that; KSW_EZ_SCORE_ONLY, KSW_EZ_RIGHT, KSW_EZ_APPROX_MAX and
 	KSW_EZ_REV_CIGAR give the same score, and REV_CIGAR is the reversed CIGAR."""
-	H.assert_c_case("drv_b_ksw", "global", kind, 11 + kind, 300, 120)
+	H.assert_c_case("drv_b_ksw", "global", kind, 11 + kind, 600, 120)
 
 
 @pytest.mark.parametrize("kind", [0, 1], ids=["extz2", "extd2"])
 def test_extension_matches_reference(kind):
-	"""KSW_EZ_EXTZ_ONLY (the left and right extensions of every minimap2 alignment): max (best score
-	over all cells), mqe (best cell ending the query) and mte (ending the target) equal the reference;
-	reach_end is set exactly when mqe + end_bonus > max (--end-bonus); the CIGAR ends at the max cell
-	and scores max, or reaches the query end and scores mqe."""
-	H.assert_c_case("drv_b_ksw", "extension", kind, 21 + kind, 300, 120)
+	"""KSW_EZ_EXTZ_ONLY (the left and right extensions of every minimap2 alignment) on 600 random
+	pairs: max (best score over all cells), mqe (best cell ending the query) and mte (ending the
+	target) equal the reference; reach_end is set exactly when mqe + end_bonus > max (--end-bonus);
+	the CIGAR ends at the max cell and scores max, or reaches the query end and scores mqe."""
+	H.assert_c_case("drv_b_ksw", "extension", kind, 21 + kind, 600, 120)
 
 
 def test_generic_matrix_transitions():
@@ -68,6 +68,13 @@ def test_spliced_kernel_places_intron():
 	reverse complements (CT..AC) with KSW_EZ_SPLICE_REV; a long gap is an intron (N) even without the
 	splice-signal flags (minimap2.1, splice mode)."""
 	H.assert_c_case("drv_b_ksw", "exts2_intron")
+
+
+def test_spliced_kernel_long_gap_threshold():
+	"""ksw_exts2_sse with the splice preset's scoring: a k-base gap is a deletion while 2 + k < 32 and an
+	intron (N) once 2 + k > 32, the cheaper of O1+k*E1 and O2 (minimap2.1: in the splice mode the
+	second gap penalty is a flat O2 and long deletions are introns); the score is 120 minus that cost."""
+	H.assert_c_case("drv_b_ksw", "exts2_long_gap")
 
 
 def test_simd_variants_agree():

@@ -646,6 +646,39 @@ static int case_exts2_intron(int argc, char *argv[])
 	return 0;
 }
 
+/* args: none. ksw_exts2_sse without splice signals (-A1 -B2 -O2,32 -E1,0, the splice preset): a
+ * k-base deletion costs q + k*e = 2 + k as a deletion and q2 = 32 as an intron (minimap2.1, splice
+ * mode: long deletions are introns; the second gap extension is not used), so 60M kD 60M is a D for
+ * 2 + k < 32 and an N for 2 + k > 32 (k = 30 ties and is skipped). */
+static int case_exts2_long_gap(int argc, char *argv[])
+{
+	uint8_t t[256], qq[128];
+	int8_t mat[25];
+	int i, k, v;
+	rng_state = 515;
+	gen_mat(mat, 1, 2, 0, 1);
+	for (k = 20; k <= 40; ++k) {
+		if (k == 30) continue;
+		for (i = 0; i < 120 + k; ++i) t[i] = rng_int(0, 3);
+		for (i = 0; i < 120; ++i) qq[i] = i < 60? t[i] : t[i + k];
+		t[59] = 1, t[60 + k] = 3, qq[59] = 1, qq[60] = 3; /* exon ends differ from the gap's ends: one placement */
+		t[60] = 0, t[59 + k] = 0;
+		for (v = 0; v < 3; ++v) {
+			exts2_f f = exts2_variant(v);
+			ksw_extz_t ez;
+			int op = 2 + k < 32? KSW_CIGAR_DEL : KSW_CIGAR_N_SKIP;
+			if (f == 0) continue;
+			memset(&ez, 0, sizeof(ez));
+			f(0, 120, qq, 120 + k, t, 5, mat, 2, 1, 32, 9, -1, -1, 9, 5, 0, 0, &ez);
+			MMT_CHECKF(ez.n_cigar == 3 && ez.cigar[0] == (60<<4|KSW_CIGAR_MATCH) && ez.cigar[1] == ((uint32_t)k<<4|op) && ez.cigar[2] == (60<<4|KSW_CIGAR_MATCH),
+					   "variant %d k %d: want 60M%d%c60M (n_cigar %d)", v, k, k, op == KSW_CIGAR_DEL? 'D' : 'N', ez.n_cigar);
+			MMT_CHECKF(ez.score == 120 - (2 + k < 32? 2 + k : 32), "variant %d k %d: score %d", v, k, ez.score);
+			ez_free(&ez);
+		}
+	}
+	return 0;
+}
+
 /* args: seed n max_len. The SSE2 and SSE4.1 builds of each kernel (present in the runtime-dispatch
  * build on x86 ELF platforms) return the same scores, positions and CIGARs as the entry point. */
 static int case_variants(int argc, char *argv[])
@@ -742,6 +775,7 @@ static const mmt_case_t cases[] = {
 	{ "empty", case_empty },
 	{ "ll_i16", case_ll_i16 },
 	{ "exts2_intron", case_exts2_intron },
+	{ "exts2_long_gap", case_exts2_long_gap },
 	{ "variants", case_variants },
 	{ "variants_splice", case_variants_splice },
 	{ 0, 0 }

@@ -39,7 +39,9 @@ def sim(synth, tmp_path_factory):
 	"""Reads on the standard synthetic genome: ONT-like, HiFi-like and CLR-like (25 each, 1-4 kbp,
 	anywhere, so some fall in repeats, inverted repeats, N runs and low-complexity tracts), 15
 	HiFi-like reads from unique sequence (for lr:hqae, which is slow on low-complexity reads) and
-	three assembly-like contigs of 15-25 kbp, each with one inverted piece."""
+	three assembly-like contigs of 15-25 kbp, each with one inverted piece. Each FASTA also holds four
+	probe reads (a 6 kbp inversion, a 600 bp deletion, a 7 kbp unrelated insert, a 300 bp stretch of 40%
+	substitutions) whose mappings depend on -g, -r, -z and the long join."""
 	d = tmp_path_factory.mktemp("b_presets")
 	g = synth.genome
 	sets = {
@@ -49,9 +51,17 @@ def sim(synth, tmp_path_factory):
 		"hifi_u": H.simulate_long_reads(g, 15, profile="hifi", seed=205, length=(1000, 4000), unique=True),
 		"ctg": H.simulate_contigs(g, 3, length=(15000, 25000), seed=204, inversions=1, inversion_len=(800, 1500)),
 	}
+	ref = g["chr1"]
+	rng = H.Rng(206)
+	# probes whose mapping depends on -g, -r, -z and the long join; written to every FASTA, not checked
+	# against truth (the reads lists exclude them)
+	probes = [("probe_inv6k", ref[30000:33000] + H.revcomp(ref[33000:39000]) + ref[39000:42000]),
+		("probe_del600", ref[20000:22000] + ref[22600:24600]),
+		("probe_ins7k", ref[5000:7000] + rng.dna(7000) + ref[14000:16000]),
+		("probe_div", ref[44000:46000] + H.mutate(rng, ref[46000:46300], 0.4) + ref[46300:48300])]
 	out = {}
 	for name, reads in sets.items():
-		out[name] = (H.write_fasta(str(d / (name + ".fa")), reads), reads)
+		out[name] = (H.write_fasta(str(d / (name + ".fa")), [(r.name, r.seq) for r in reads] + probes), reads)
 	return out
 
 

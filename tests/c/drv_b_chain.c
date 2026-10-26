@@ -189,6 +189,41 @@ static int case_gap_cost(int argc, char *argv[])
 	return 0;
 }
 
+/* args: none. The band edge (-r): two runs of 20 anchors whose diagonals differ by exactly bw form
+ * one chain of all 40, and by bw+1 no chain holds anchors of both runs, for DP and RMQ chaining
+ * (with the inner DP of --rmq-inner, bw 100 and 333; without it, bw 100). Without the inner DP the
+ * second run may not chain at all, since RMQ offers each anchor only the best-scoring predecessor. */
+static int case_band_edge(int argc, char *argv[])
+{
+	void *km = km_init();
+	int method, bi, extra;
+	static const int bws[] = { 100, 333 };
+	for (method = 0; method < 3; ++method) /* 0: DP; 1: RMQ with --rmq-inner 1000; 2: RMQ with --rmq-inner 0 */
+	for (bi = 0; bi < 2; ++bi)
+	for (extra = 0; extra < 2; ++extra) {
+		mm128_t in[40];
+		chains_t c;
+		int i, n = 0, dd = bws[bi] + extra;
+		if (method == 2 && bi == 1) continue; /* RMQ alone at dd 333: the gap cost lets later anchors pick other predecessors */
+		for (i = 0; i < 20; ++i) in[n++] = anchor(0, 0, 1000 + i * 10, 100 + i * 10, 15);
+		for (i = 0; i < 20; ++i) in[n++] = anchor(0, 0, 1200 + dd + i * 10, 300 + i * 10, 15);
+		rmq_inner = method == 2? 0 : 1000;
+		run_chain(km, method > 0, in, n, 5000, bws[bi], 25, 5000, 3, 40, 0.8f, 0.0f, 15, &c);
+		if (!extra) {
+			MMT_CHECKF(c.n_u == 1 && chain_cnt(&c, 0) == 40, "method %d bw %d dd %d: %d chains, the first of %d anchors", method, bws[bi], dd, c.n_u, c.n_u? chain_cnt(&c, 0) : 0);
+		} else {
+			int j, k = 0, mixed = 0;
+			for (j = 0; j < c.n_u; k += chain_cnt(&c, j), ++j)
+				if ((int32_t)c.a[k].y < 300 && (int32_t)c.a[k + chain_cnt(&c, j) - 1].y >= 300) mixed = 1;
+			MMT_CHECKF(c.n_u >= 1 && !mixed, "method %d bw %d dd %d: a chain crosses the band (%d chains)", method, bws[bi], dd, c.n_u);
+		}
+		free_chains(km, &c);
+	}
+	rmq_inner = 1000;
+	km_destroy(km);
+	return 0;
+}
+
 /* args: none. -n and -m: a chain of 12 anchors scoring 15+11*10 = 125 is kept with min_cnt 12 and
  * min_sc 125, and dropped with min_cnt 13 or min_sc 126. */
 static int case_min_cnt_sc(int argc, char *argv[])
@@ -417,6 +452,7 @@ static const mmt_case_t cases[] = {
 	{ "collinear", case_collinear },
 	{ "separate", case_separate },
 	{ "gap_cost", case_gap_cost },
+	{ "band_edge", case_band_edge },
 	{ "min_cnt_sc", case_min_cnt_sc },
 	{ "max_iter", case_max_iter },
 	{ "random_dp", case_random_dp },

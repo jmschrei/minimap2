@@ -217,7 +217,8 @@ def test_chimeric_reads_supplementary_and_SA(clean, tmp_path):
 def test_max_clip_ratio_boundary(clean, tmp_path):
 	"""--max-clip-ratio: an alignment is dropped when both its unaligned ends exceed RATIO times the
 	read length. A read of 1000 random bases, 1000 reference bases and 1000 random bases (both ends
-	1000 of 3000) is dropped at 0.333 and kept at 0.334 and by default (-c)."""
+	1000 of 3000) is dropped at 0.333 and kept at 0.334 and by default (-c); a read clipped at one end
+	only (1000 random + 2000 reference bases) is kept at 0.3."""
 	rng = H.Rng(7)
 	seq = rng.dna(1000) + clean.genome["chr1"][5000:6000] + rng.dna(1000)
 	fa = H.write_fasta(str(tmp_path / "clip.fa"), [("clip", seq)])
@@ -225,6 +226,9 @@ def test_max_clip_ratio_boundary(clean, tmp_path):
 	for args in (["--max-clip-ratio", "0.334"], []):
 		p = H.map_reads(clean.fasta, fa, ["-c"] + args).paf()
 		assert [(x.qstart, x.qend, x.tstart, x.tend) for x in p] == [(1000, 2000, 5000, 6000)], (args, p)
+	one = H.write_fasta(str(tmp_path / "clip1.fa"), [("clip1", rng.dna(1000) + clean.genome["chr1"][5000:7000])])
+	p = H.map_reads(clean.fasta, one, ["-c", "--max-clip-ratio", "0.3"]).paf()
+	assert [(x.qstart, x.qend, x.tstart, x.tend) for x in p] == [(1000, 3000, 5000, 7000)], p
 
 
 def test_cap_sw_mem(clean, read_sets):
