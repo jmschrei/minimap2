@@ -368,6 +368,16 @@ terms: no test may depend on editing it.
 * Batch boundaries of the sequence reader (bseq.c) do not change the
   output; tests check only record order and that mates stay in one batch in
   fragment mode.
+* `-x sr` can leave one mate of a read-through pair (a fragment shorter
+  than the reads, so both reads run into adapter) unmapped although it aligns
+  uniquely on its own (base behaviour; see Rules); the read-through pairs of
+  `test_c_api.py` sit at fixed positions where both mates map.
+* With `-j`, a mismatch within a few bases of a junction that the jump
+  re-reads can be counted twice in NM:i (base behaviour; see Rules); the
+  `-j` tests place substitutions 2 bases from the junction.
+* Under `make asan=1` (`MINIMAP2_TEST_MAKE_ARGS=asan=1`) LeakSanitizer
+  reports small leaks at exit with `--spsc` and `-R` (base behaviour); set
+  `ASAN_OPTIONS=detect_leaks=0` to check memory errors only.
 * Unmapped reads: a SAM line with flag 4 (not with `--sam-hit-only`); PAF
   leaves them out unless `--paf-no-hit`, which writes `name qlen 0 0 * * 0
   0 0 0 0 0 rl:i:N`.

@@ -334,7 +334,10 @@ static int case_random_dp(int argc, char *argv[])
 				x += dx, y += dy;
 				in[n++] = anchor(rev, cid, x, y, k);
 			}
-			if (rng_int(0, 2) == 0 && n < m) in[n++] = anchor(rng_int(0, 1), rng_int(0, 1), rng_int(0, 30000), rng_int(0, 8000), k);
+			if (rng_int(0, 2) == 0 && n < m) { /* fields drawn last-first in sequence: argument evaluation order is unspecified */
+				int ty = rng_int(0, 8000), tx = rng_int(0, 30000), tcid = rng_int(0, 1), trev = rng_int(0, 1);
+				in[n++] = anchor(trev, tcid, tx, ty, k);
+			}
 		}
 		radix_sort_128x(in, in + n);
 		want = ref_best_chain(n, in, 5000, 500, 0.8f, k);
@@ -444,7 +447,10 @@ static int case_heuristics(int argc, char *argv[])
 				x += dx, y += dy;
 				in[n++] = anchor(rev, cid, x, y, 15);
 			}
-			if (rng_int(0, 1) == 0 && n < m) in[n++] = anchor(rng_int(0, 1), rng_int(0, 1), rng_int(0, 30000), rng_int(0, 8000), 15);
+			if (rng_int(0, 1) == 0 && n < m) { /* fields drawn last-first in sequence: argument evaluation order is unspecified */
+				int ty = rng_int(0, 8000), tx = rng_int(0, 30000), tcid = rng_int(0, 1), trev = rng_int(0, 1);
+				in[n++] = anchor(trev, tcid, tx, ty, 15);
+			}
 		}
 		radix_sort_128x(in, in + n);
 		for (h = 0; h < (int)(sizeof(cfg) / sizeof(cfg[0])); ++h) {
@@ -503,7 +509,8 @@ static int case_sorts(int argc, char *argv[])
 		uint64_t *u = (uint64_t*)malloc((n + 1) * 8), *v = (uint64_t*)malloc((n + 1) * 8);
 		uint32_t *w = (uint32_t*)malloc((n + 1) * 4), *ws = (uint32_t*)malloc((n + 1) * 4);
 		for (i = 0; i < n; ++i) {
-			uint64_t x = mode == 0? rng_next() : mode == 1? rng_next() % 7 : rng_next() >> rng_int(0, 63);
+			uint64_t x = mode == 0? rng_next() : mode == 1? rng_next() % 7 : rng_next();
+			if (mode == 2) x >>= rng_int(0, 63); /* a separate statement: operand order is unspecified */
 			a[i].x = x, a[i].y = rng_next() % 1000;
 			u[i] = mode == 1? rng_next() % 5 : rng_next();
 			w[i] = mode == 1? (uint32_t)(rng_next() % 9) : (uint32_t)rng_next();
