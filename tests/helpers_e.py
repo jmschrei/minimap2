@@ -12,8 +12,6 @@ mappy_env               environment that lets a child Python import the cached m
 
 import os
 import re
-import struct
-
 import minimap2_build
 import minimap2_helpers as H
 
@@ -95,10 +93,9 @@ def mm_flags():
 
 
 def mmi_header(path):
-	"""(magic, w, k, b, n_seq, flag) from the first 24 bytes of an .mmi file (MM_IDX_MAGIC then five uint32)."""
-	with open(path, "rb") as f:
-		head = f.read(24)
-	return (head[:4],) + struct.unpack("<5I", head[4:24])
+	"""(magic, w, k, b, n_seq, flag) of an .mmi file, from the shared reader (minimap2_helpers.read_mmi)."""
+	p = H.read_mmi(path, header_only=True)
+	return (H.MMI_MAGIC, p.w, p.k, p.b, p.n_seq, p.flag)
 
 
 def mappy_env():

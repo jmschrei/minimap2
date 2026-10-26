@@ -748,3 +748,44 @@ def test_thread_buffer_reuse(mappy, synth, default_aligner, hifi):
 			[E.hit_key(h) for h in default_aligner.map(r.seq, cs=True)]
 		a, b = r.seq[:150], H.revcomp(r.seq[300:450])
 		assert [E.hit_key(h) for h in sr.map(a, b, buf=buf)] == [E.hit_key(h) for h in sr.map(a, b)]
+
+
+def test_threads_with_a_buffer_each(mappy, synth, default_aligner, hifi, hifi_unique):
+	"""One Aligner shared by four Python threads, each with its own ThreadBuffer (a per-thread buffer;
+	cmappy.h releases the GIL while it maps), gives every read the alignments, cs and MD that one
+	thread gives it, single-end and for -x sr pairs. Each thread maps every read twice, starting at
+	a different one, so the threads map different reads at the same time."""
+	import threading
+	reads = [r.seq for r in hifi[0] + hifi_unique[0]]
+	sr = mappy.Aligner(synth.fasta, preset="sr")
+	pairs = [(s[:150], H.revcomp(s[200:350])) for s in reads]
+
+	def one(buf, i):
+		se = [E.hit_key(h) + (h.cs, h.MD) for h in default_aligner.map(reads[i], buf=buf, cs=True, MD=True)]
+		pe = [E.hit_key(h) + (h.read_num,) for h in sr.map(pairs[i][0], pairs[i][1], buf=buf)]
+		return se, pe
+	want = [one(None, i) for i in range(len(reads))]
+	assert sum(1 for se, pe in want if se and pe) >= 0.9 * len(reads)
+	n_threads, got, errors = 4, {}, []
+	start = threading.Barrier(n_threads)
+
+	def work(t):
+		try:
+			buf = mappy.ThreadBuffer()
+			start.wait()
+			for rnd in range(2):
+				n = len(reads)
+				for j in range(n):  # a different starting read per thread, odd threads backwards
+					i = (j + 11 * t + 5 * rnd) % n if t % 2 == 0 else (n - 1 - j + 11 * t) % n
+					got[(t, rnd, i)] = one(buf, i)
+		except Exception as e:  # reported in the main thread
+			errors.append(repr(e))
+	ths = [threading.Thread(target=work, args=(t,)) for t in range(n_threads)]
+	for th in ths:
+		th.start()
+	for th in ths:
+		th.join()
+	assert errors == []
+	assert len(got) == n_threads * 2 * len(reads)
+	for (t, rnd, i), v in got.items():
+		assert v == want[i], (t, rnd, i)

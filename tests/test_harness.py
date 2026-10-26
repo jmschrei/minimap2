@@ -33,6 +33,19 @@ def test_rng_helpers_stay_in_range():
 	assert abs(mean - 300) < 3 and abs(sd - 30) < 3
 
 
+def test_rng_dna_alphabets():
+	# four letters: 2 bits per letter, low bits first (the stream every pin depends on)
+	x = H.Rng(9).u64()
+	assert H.Rng(9).dna(32) == "".join("ACGT"[(x >> (2 * i)) & 3] for i in range(32))
+	assert H.Rng(9).dna(40, "TGCA") == H.Rng(9).dna(40).translate(str.maketrans("ACGT", "TGCA"))
+	# other sizes: every letter of the alphabet, nothing else
+	for alphabet in ("N", "AC", "ACG", "ACGTN", "ACGTURYKMSWBDHVN"):
+		s = H.Rng(3).dna(3000, alphabet)
+		assert len(s) == 3000 and set(s) == set(alphabet)
+	with pytest.raises(ValueError):
+		H.Rng(1).dna(5, "")
+
+
 def test_standard_genomes_are_stable():
 	"""The standard genomes must not change across Python versions or platforms: pins depend on them."""
 	g = conftest.make_synth()
@@ -338,6 +351,53 @@ def test_mlen_blen_de_and_score_hand_worked():
 	# +2 per match, -4 per mismatch, -1 for N, gaps min(4+2k, 24+k)
 	assert H.cigar_score(ref, 0, seq, cigar) == 7 * 2 - 4 - 1 - (4 + 2 * 2) - (4 + 2 * 1)
 	assert H.cigar_score("A" * 40, 0, "A" * 10, "5M30D5M") == 20 - (24 + 30)
+	# -b: A<->G and C<->T mismatches cost the transition penalty, transversions still -B
+	assert H.cigar_score("ACGTAC", 0, "GTCAAC", "6M", transition=1) == 2 * 2 - 1 - 1 - 4 - 4
+	assert H.cigar_score("ACGTAC", 0, "GTCAAC", "6M", transition=0) == 2 * 2 - 4 * 4
+
+
+def test_reference_minimizers_brute_force():
+	# kmer_hash is a bijection on 2k-bit keys
+	assert sorted(H.kmer_hash(x, 3) for x in range(64)) == list(range(64))
+	# minimizers(): every k-mer whose hash is the smallest of some window of w consecutive k-mers
+	def code(t):
+		return sum(H.nt4(c) << 2 * (len(t) - 1 - j) for j, c in enumerate(t))
+	rng = H.Rng(21)
+	for trial in range(40):
+		seq = rng.dna(rng.randint(20, 200))
+		k, w = rng.choice([5, 7, 11]), rng.randint(1, 10)
+		km = []
+		for i in range(k - 1, len(seq)):
+			s = seq[i - k + 1:i + 1]
+			fwd, rev = code(s), code(H.revcomp(s))
+			km.append((i, H.kmer_hash(min(fwd, rev), k), 0 if fwd < rev else 1))
+		want = set()
+		for st in range(max(1, len(km) - w + 1)):
+			win = km[st:st + w]
+			m = min(h for _, h, _ in win)
+			want.update(x for x in win if x[1] == m)
+		assert H.minimizers(seq, w, k) == sorted(want), (trial, seq, w, k)
+	# a window with its minimum twice: kept by default, refused with ties=False
+	with pytest.raises(ValueError):
+		H.minimizers("ACGTTACGTTACGTTACGTT", 6, 5, ties=False)
+	# an ambiguous base splits the k-mers into runs
+	assert [len(r) for r in H.kmer_runs("ACGTACGNACGTACGTA", 5)] == [3, 5]
+	# -H: k-mers of the homopolymer-compressed sequence, spans in the original
+	q = H.kmer_runs("AAACCCGGGTTTA", 3, hpc=True)[0]
+	assert [(x.x & 0xff, x.pos) for x in q] == [(9, 8), (9, 11), (7, 12)]
+
+
+def test_mmi_reader_round_trip(index_of, tmp_path):
+	seqs = [("c1", H.Rng(31).dna(3000)), ("c2", H.Rng(32).dna(1500))]
+	fa = H.write_fasta(str(tmp_path / "g.fa"), seqs)
+	parts = H.read_mmi(index_of(fa))
+	assert len(parts) == 1
+	p = parts[0]
+	assert (p.w, p.k, p.flag, p.names, p.lengths) == (10, 15, 0, ["c1", "c2"], [3000, 1500])
+	assert p.minimizers == H.expected_index([s for _, s in seqs], 10, 15)
+	assert [bytes(H.nt4(c) for c in s) for _, s in seqs] == p.seq4
+	h = H.read_mmi(index_of(fa), header_only=True)
+	assert (h.w, h.k, h.names, h.lengths) == (10, 15, ["c1", "c2"], [3000, 1500])
 
 
 def test_cigar_helpers():
@@ -434,6 +494,13 @@ def test_invariant_checkers_catch_errors():
 	assert H.paf_invariant_errors(paf, genome, {"q": "TTGTACGT"}) == []
 	paf[0].nmatch = 5
 	assert H.paf_invariant_errors(paf, genome, {"q": "TTGTACGT"}) != []
+	# a long-form cs:Z may start with a substitution: recognised by its '=' runs, not its first character
+	assert H.cs_is_long("*ag=TACGT") and H.cs_is_long("=GTACG*ta") and not H.cs_is_long("*ag:5")
+	mis = "@SQ\tSN:c\tLN:20\nq\t0\tc\t3\t60\t2S6M\t*\t0\t0\tTTATACGT\t*\tcs:Z:*ga=TACGT\n"
+	assert H.sam_invariant_errors(H.parse_sam(mis), genome, {"q": ["TTATACGT"]}) == []
+	assert H.sam_invariant_errors(H.parse_sam(mis.replace("*ga=TACGT", "*ga=TACGA")), genome, {"q": ["TTATACGT"]}) != []
+	paf = H.parse_paf("q\t8\t2\t8\t+\tc\t20\t2\t8\t5\t6\t60\ttp:A:P\tcg:Z:6M\tcs:Z:*ga=TACGT\n")
+	assert H.paf_invariant_errors(paf, genome, {"q": "TTATACGT"}) == []
 
 
 def test_pair_and_tlen_helpers():

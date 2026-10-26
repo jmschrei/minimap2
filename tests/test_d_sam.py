@@ -425,10 +425,8 @@ def test_tags_at_read_ends(synth, end_reads, opt, tag):
 	number of MD may be 0 or 1; MD omits a final 0, known-bugs/md-trailing-zero.md)."""
 	fq, reads = end_reads
 	sam = H.map_reads(synth.fasta, fq, ["-a", opt], preset="sr").sam()
-	# sam_invariant_errors takes a cs:Z for the long form only if it starts with '=', so a long cs
-	# starting with a mismatch is checked here instead
 	long_cs = opt == "--cs=long"
-	assert H.sam_invariant_errors(sam, synth.genome, reads, check_tags=("NM", "MD") if long_cs else ("NM", "MD", "cs")) == []
+	assert H.sam_invariant_errors(sam, synth.genome, reads) == []
 	recs = [r for r in sam.records if r.is_primary]
 	assert len(recs) == len(reads) and all(not r.is_unmapped and "S" not in r.cigar for r in recs)
 	vals = [r.tags[tag] for r in recs] if tag else [r.cigar for r in recs]

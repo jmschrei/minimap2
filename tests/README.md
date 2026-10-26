@@ -332,8 +332,13 @@ terms: no test may depend on editing it.
 * cs:Z long form (`--cs=long`) writes the read's bases in uppercase. An
   intron is `~` plus its first two reference bases, its length and its last
   two (e.g. `~gt364ag`); MD skips introns.
-* ts:A appears only on spliced alignments (cookbook.md): `+` when the read
-  is in the transcript's orientation.
+* ts:A gives the read's orientation to the transcript: `+` when the read is
+  in the transcript's orientation. cookbook.md says it is only available on
+  spliced reads, which holds under `-ub` (the splice presets' default): on
+  the simulated cDNA and RNA-seq reads every spliced alignment and no
+  unspliced one carried it. `-uf` and `-ur` write `ts:A:+` and `ts:A:-` on
+  every alignment, spliced or not, and `-un` (and `--splice` without `-u`)
+  write `ts:A:-` on every alignment (base behaviour; see Rules).
 * Secondary alignments are written by default (up to `-N`, 5) with SEQ and
   QUAL `*` (`--secondary-seq`: the aligned part, hard-clipped);
   supplementary alignments are hard-clipped unless `-Y`; the primary of a

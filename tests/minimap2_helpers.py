@@ -16,6 +16,9 @@ Contents:
 	write_interleaved / genes_bed12 / genes_gtf / junctions_bed
 	read_fastx / read_fasta     FASTA/FASTQ readers, plain or gzip
 	index_genome                `minimap2 -x PRESET -d`, cached per genome and preset
+	kmer_hash / SketchRef /     reference (w,k)-minimizers (minimap2.1's rule and
+	minimizers / expected_index sketch.c's hash, with HPC)
+	read_mmi / MmiPart          a reader for the .mmi format
 	run_mm2 / map_reads         run the binary with a timeout and no core dumps
 	parse_sam / parse_paf       strict SAM and PAF parsers with typed tags
 	compute_nm / compute_md /   recompute alignment tags from the genome
@@ -130,6 +133,13 @@ class Rng(object):
 		return int(mean + int(s * sd / float(1 << 16)))
 
 	def dna(self, n, alphabet="ACGT"):
+		"""n letters drawn uniformly from alphabet (a string of any length >= 1). A four-letter
+		alphabet takes 2 bits per letter, 32 letters per u64; any other size draws each letter with
+		below(), so it gives a different stream from a four-letter one."""
+		if not alphabet:
+			raise ValueError("dna() needs a non-empty alphabet")
+		if len(alphabet) != 4:
+			return "".join(alphabet[self.below(len(alphabet))] for _ in range(n))
 		out = []
 		while len(out) < n:
 			x = self.u64()
@@ -1370,6 +1380,282 @@ def index_genome(fa, tmpdir, preset=None, extra_args=(), threads=1, binary=None)
 
 
 # ---------------------------------------------------------------------------
+# Reference minimizers and the .mmi format
+# ---------------------------------------------------------------------------
+
+# sketch.c's seq_nt4_table: A/C/G/T/U in either case -> 0..3, anything else -> 4
+_SKETCH_NT4 = {"A": 0, "C": 1, "G": 2, "T": 3, "U": 3, "a": 0, "c": 1, "g": 2, "t": 3, "u": 3}
+
+
+def kmer_hash(key, k):
+	"""The invertible integer hash minimap2 applies to a 2k-bit k-mer (Li 2016, 2018; sketch.c),
+	restricted to 2k bits: a bijection on [0, 4^k)."""
+	mask = (1 << (2 * k)) - 1
+	key = (~key + (key << 21)) & mask
+	key = key ^ (key >> 24)
+	key = ((key + (key << 3)) + (key << 8)) & mask
+	key = key ^ (key >> 14)
+	key = ((key + (key << 2)) + (key << 4)) & mask
+	key = key ^ (key >> 28)
+	key = (key + (key << 31)) & mask
+	return key
+
+
+class Kmer(tuple):
+	"""(x, pos, strand): x = kmer_hash << 8 | span, pos the 0-based position of the k-mer's last base,
+	strand 0 if the forward k-mer has the smaller 2-bit encoding, 1 otherwise."""
+	__slots__ = ()
+
+	def __new__(cls, x, pos, strand):
+		return tuple.__new__(cls, (x, pos, strand))
+
+	x = property(lambda self: self[0])
+	pos = property(lambda self: self[1])
+	strand = property(lambda self: self[2])
+
+	@property
+	def hash(self):
+		return self[0] >> 8
+
+
+KMER_SKIP = (1 << 64) - 1  # x of a k-mer that cannot be a minimizer (an HPC k-mer spanning 256 bases or more)
+
+
+def kmer_runs(seq, k, hpc=False):
+	"""The canonical k-mers of seq, one list of Kmer per maximal run of A/C/G/T/U (any other character
+	ends a run). span is k, or with hpc (-H) the length in seq of the k homopolymer-compressed bases,
+	and pos is then the last base of the k-mer's last homopolymer run. An HPC k-mer spanning 256 bases
+	or more keeps its place in the windows but is never a minimizer (x = KMER_SKIP). Only odd k is
+	modelled (no k-mer is its own reverse complement); even k raises ValueError."""
+	if k % 2 == 0 or not 0 < k <= 28:
+		raise ValueError("the reference models odd k in 1..28 only")
+	mask = (1 << 2 * k) - 1
+	shift = 2 * (k - 1)
+	runs, cur = [], None
+	n, i = len(seq), 0
+	fwd = rev = l = span = 0
+	spans = []
+	while i < n:
+		c = _SKETCH_NT4.get(seq[i], 4)
+		if c > 3:
+			cur = None
+			i += 1
+			continue
+		if cur is None:
+			cur = []
+			runs.append(cur)
+			fwd = rev = l = span = 0
+			spans = []
+		if hpc:
+			run = 1
+			while i + run < n and _SKETCH_NT4.get(seq[i + run], 4) == c:
+				run += 1
+			i += run - 1
+			spans.append(run)
+			span += run
+			if len(spans) > k:
+				span -= spans.pop(0)
+		else:
+			span = k
+		fwd = ((fwd << 2) | c) & mask
+		rev = (rev >> 2) | ((3 - c) << shift)
+		l += 1
+		if l >= k:
+			z = 0 if fwd < rev else 1
+			cur.append(Kmer(kmer_hash(fwd if z == 0 else rev, k) << 8 | span if span < 256 else KMER_SKIP, i, z))
+		i += 1
+	return runs
+
+
+def _window_minima(kms, w):
+	"""[frozenset of the Kmers with the smallest x] for each window of w consecutive k-mers of kms;
+	a run with 1..w-1 k-mers has one window holding all of them."""
+	if not kms:
+		return []
+	if len(kms) < w:
+		m = min(q.x for q in kms)
+		return [frozenset(q for q in kms if q.x == m and m != KMER_SKIP)]
+	out = []
+	dq = []  # indices of increasing x, a monotone queue
+	head = 0
+	where = {}
+	for j, q in enumerate(kms):
+		where.setdefault(q.x, []).append(j)
+	for j, q in enumerate(kms):
+		while len(dq) > head and kms[dq[-1]].x >= q.x:
+			dq.pop()
+		dq.append(j)
+		if dq[head] <= j - w:
+			head += 1
+		if j >= w - 1:
+			m = kms[dq[head]].x
+			if m == KMER_SKIP:
+				out.append(frozenset())
+				continue
+			out.append(frozenset(kms[t] for t in where[m] if j - w < t <= j))
+	return out
+
+
+class SketchRef(object):
+	"""Reference (w,k)-minimizers of one sequence, by the rule of minimap2.1 ("a minimizer is the
+	smallest k-mer in a window of w consecutive k-mers"; every k-mer with the smallest hash on a tie).
+
+	runs[r] are the Kmers of the r-th A/C/G/T/U run and windows[r] the minimum-x sets of its windows
+	of w consecutive k-mers; a run with fewer than w k-mers has one short window."""
+
+	def __init__(self, seq, w, k, hpc=False):
+		self.seq, self.w, self.k, self.hpc = seq, w, k, hpc
+		self.runs = kmer_runs(seq, k, hpc)
+		self.windows = [_window_minima(r, w) for r in self.runs]
+
+	@property
+	def has_ties(self):
+		"""True if some window's minimum occurs more than once in it."""
+		return any(len(s) > 1 for ws in self.windows for s in ws)
+
+	def minimizers(self):
+		"""Every window minimum of every run (Kmers), sorted by position."""
+		u = set()
+		for ws in self.windows:
+			for s in ws:
+				u |= s
+		return sorted(u, key=lambda q: q.pos)
+
+	def kmer_at(self):
+		"""{pos: Kmer} for every k-mer of the sequence that can be a minimizer."""
+		return dict((q.pos, q) for r in self.runs for q in r if q.x != KMER_SKIP)
+
+
+def minimizers(seq, w, k, hpc=False, ties=True):
+	"""The (w,k)-minimizers of seq as a sorted list of (end position, hash, strand) (SketchRef).
+	ties=False raises ValueError when a window's minimum occurs twice in it (a tandem repeat), for
+	tests that model only windows with a single minimum."""
+	ref = SketchRef(seq, w, k, hpc)
+	if not ties and ref.has_ties:
+		raise ValueError("a window of the sequence has its minimum twice; ties are not modelled here")
+	return [(q.pos, q.hash, q.strand) for q in ref.minimizers()]
+
+
+def expected_index(seqs, w, k, hpc=False):
+	"""{hash: sorted tuple of rid << 32 | pos << 1 | strand} that an index of seqs (a list of strings,
+	in index order) must hold by the documented rule. Only for sequences without ambiguous bases and
+	without tied windows (raises ValueError otherwise), where the rule has no edge cases."""
+	out = {}
+	for rid, s in enumerate(seqs):
+		ref = SketchRef(s, w, k, hpc)
+		if len(ref.runs) > 1 or ref.has_ties:
+			raise ValueError("sequence %d has an ambiguous base or a tied window; the exact reference does not apply" % rid)
+		for q in ref.minimizers():
+			out.setdefault(q.hash, []).append(rid << 32 | q.pos << 1 | q.strand)
+	return dict((h, tuple(sorted(v))) for h, v in out.items())
+
+
+MMI_MAGIC = b"MMI\x02"  # minimap.h MM_IDX_MAGIC
+MM_I_HPC, MM_I_NO_SEQ, MM_I_NO_NAME = 0x1, 0x2, 0x4  # minimap.h MM_I_*
+
+
+class MmiPart(object):
+	"""One index of a .mmi file (a multi-part index holds several back to back).
+
+	w, k, b, flag: the header; names (None with MM_I_NO_NAME) and lengths of the n_seq sequences;
+	minimizers: {hash: sorted tuple of positions rid << 32 | pos << 1 | strand}; seq4: the 4-bit base
+	codes (0-3 ACGT, 4 other) per sequence as bytes, or None with --idx-no-seq; n_singletons: hashes
+	stored once; offset, end: the part's byte range in the file."""
+
+	def __init__(self):
+		self.w = self.k = self.b = self.flag = 0
+		self.names, self.lengths, self.minimizers, self.seq4 = [], [], {}, None
+		self.n_singletons = 0
+		self.offset = self.end = 0
+
+	@property
+	def n_seq(self):
+		return len(self.names)
+
+	def seq_codes(self, rid):
+		return self.seq4[rid] if self.seq4 is not None else None
+
+
+def _parse_mmi_part(data, off, header_only=False):
+	import struct
+	p = MmiPart()
+	p.offset = off
+	if data[off:off + 4] != MMI_MAGIC:
+		raise ValueError("no MMI magic at byte %d" % off)
+	off += 4
+	p.w, p.k, p.b, n_seq, p.flag = struct.unpack_from("<5I", data, off)
+	off += 20
+	for _ in range(n_seq):
+		l = data[off]
+		off += 1
+		p.names.append(data[off:off + l].decode("ascii", "surrogateescape") if l else None)
+		off += l
+		p.lengths.append(struct.unpack_from("<I", data, off)[0])
+		off += 4
+	if header_only:
+		return p, off
+	mins = {}
+	for bi in range(1 << p.b):
+		n, = struct.unpack_from("<i", data, off)
+		off += 4
+		pos = struct.unpack_from("<%dQ" % n, data, off) if n else ()
+		off += 8 * n
+		size, = struct.unpack_from("<I", data, off)
+		off += 4
+		used = 0
+		for _ in range(size):
+			key, val = struct.unpack_from("<2Q", data, off)
+			off += 16
+			h = (key >> 1) << p.b | bi
+			if h in mins:
+				raise ValueError("hash %d stored twice" % h)
+			if key & 1:
+				mins[h] = (val,)
+				p.n_singletons += 1
+			else:
+				st, cnt = val >> 32, val & 0xffffffff
+				if cnt < 2 or st + cnt > n:
+					raise ValueError("bucket %d: bad position range %d+%d of %d" % (bi, st, cnt, n))
+				mins[h] = tuple(pos[st:st + cnt])
+				used += cnt
+		if used != n:
+			raise ValueError("bucket %d: %d positions stored, %d referenced" % (bi, n, used))
+	p.minimizers = mins
+	if not p.flag & MM_I_NO_SEQ:
+		total = sum(p.lengths)
+		nw = (total + 7) // 8
+		words = struct.unpack_from("<%dI" % nw, data, off)
+		off += 4 * nw
+		codes = bytearray(total)
+		for i in range(total):
+			codes[i] = (words[i >> 3] >> ((i & 7) << 2)) & 0xf
+		p.seq4, o = [], 0
+		for l in p.lengths:
+			p.seq4.append(bytes(codes[o:o + l]))
+			o += l
+	p.end = off
+	return p, off
+
+
+def read_mmi(path, header_only=False):
+	"""All parts of a .mmi file in order (the layout of index.c's mm_idx_dump: MM_IDX_MAGIC, w, k, b,
+	n_seq, flag, the names and lengths, per bucket the position array and the hash table, then the
+	packed sequence unless MM_I_NO_SEQ). Raises ValueError on a malformed file or trailing bytes.
+	header_only=True returns the first part with its header, names and lengths only."""
+	with open(str(path), "rb") as f:
+		data = f.read()
+	if header_only:
+		return _parse_mmi_part(data, 0, True)[0]
+	parts, off = [], 0
+	while off < len(data):
+		p, off = _parse_mmi_part(data, off)
+		parts.append(p)
+	if not parts:
+		raise ValueError("empty .mmi file")
+	return parts
+
+
+# ---------------------------------------------------------------------------
 # SAM parsing
 # ---------------------------------------------------------------------------
 
@@ -1954,15 +2240,28 @@ def compute_de(ref, pos0, seq, cigar):
 	return 1.0 - float(mlen) / (cols + gapo)
 
 
-def cigar_score(ref, pos0, seq, cigar, a=2, b=4, q=4, e=2, q2=24, e2=1, sc_ambi=1):
-	"""Alignment score of a CIGAR under minimap2's two-piece affine gap model: +a per match, -b per
-	mismatch, -sc_ambi for a column with a non-ACGT base, and min(q+k*e, q2+k*e2) per k-long gap
-	(the cost the usage text gives for -O/-E). Introns are not scored."""
+_TRANSITIONS = frozenset([(0, 2), (2, 0), (1, 3), (3, 1)])  # A<->G, C<->T as 0-3 codes
+
+
+def cigar_score(ref, pos0, seq, cigar, a=2, b=4, q=4, e=2, q2=24, e2=1, sc_ambi=1, transition=0):
+	"""Alignment score of a CIGAR under minimap2's two-piece affine gap model: +a per match (-A), -b
+	per mismatch (-B), -sc_ambi for a column with a non-ACGT base (--score-N), and min(q+k*e,
+	q2+k*e2) per k-long gap (the cost the usage text gives for -O/-E). transition is minimap2.1's
+	-b (the mismatch penalty for transitions): when non-zero, an A<->G or C<->T mismatch costs
+	-transition instead of -b. Introns are not scored; seq is in reference orientation with soft
+	clips included."""
 	s = 0
 	for x in _walk(ref, pos0, seq, cigar):
 		if x[0] == "M":
 			c1, c2 = nt4(x[1]), nt4(x[2])
-			s += -sc_ambi if (c1 > 3 or c2 > 3) else (a if c1 == c2 else -b)
+			if c1 > 3 or c2 > 3:
+				s -= sc_ambi
+			elif c1 == c2:
+				s += a
+			elif transition and (c1, c2) in _TRANSITIONS:
+				s -= transition
+			else:
+				s -= b
 		elif x[0] in "ID":
 			k = len(x[1])
 			s -= min(q + k * e, q2 + k * e2)
@@ -1972,6 +2271,13 @@ def cigar_score(ref, pos0, seq, cigar, a=2, b=4, q=4, e=2, q2=24, e2=1, sc_ambi=
 # ---------------------------------------------------------------------------
 # Generic SAM/PAF invariants
 # ---------------------------------------------------------------------------
+
+
+def cs_is_long(cs):
+	"""True if a cs:Z value is in the long form (--cs=long): identical runs are '=SEQ', never ':N'.
+	A long-form value may start with a substitution, an indel or an intron, so the first character
+	does not tell; one without any identical run reads the same in both forms."""
+	return ":" not in cs
 
 
 def _seqs_of(genome):
@@ -2055,7 +2361,7 @@ def sam_invariant_errors(sam, genome, reads=None, check_tags=("NM", "MD", "cs"))
 			if md != r.tags["MD"]:
 				errs.append("%s: MD:Z:%s, recomputed %s" % (r.qname, r.tags["MD"][:80], md[:80]))
 		if "cs" in check_tags and "cs" in r.tags:
-			cs = compute_cs(ref, r.pos0, s, r.cigar, long_form=r.tags["cs"].startswith("="))
+			cs = compute_cs(ref, r.pos0, s, r.cigar, long_form=cs_is_long(r.tags["cs"]))
 			if cs != r.tags["cs"]:
 				errs.append("%s: cs:Z:%s, recomputed %s" % (r.qname, r.tags["cs"][:80], cs[:80]))
 	return errs
@@ -2123,7 +2429,7 @@ def paf_invariant_errors(paf, genome, reads=None, check_tags=("NM", "MD", "cs", 
 			if md != p.tags["MD"]:
 				errs.append("%s: MD:Z:%s, recomputed %s" % (tag, p.tags["MD"][:80], md[:80]))
 		if "cs" in check_tags and "cs" in p.tags:
-			cs = compute_cs(ref, p.tstart, s, cg, long_form=p.tags["cs"].startswith("="))
+			cs = compute_cs(ref, p.tstart, s, cg, long_form=cs_is_long(p.tags["cs"]))
 			if cs != p.tags["cs"]:
 				errs.append("%s: cs:Z:%s, recomputed %s" % (tag, p.tags["cs"][:80], cs[:80]))
 		if "de" in check_tags and "de" in p.tags:

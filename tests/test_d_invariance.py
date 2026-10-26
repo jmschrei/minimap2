@@ -109,3 +109,35 @@ def test_seed(synth, inputs):
 			assert (p.rname, p.pos0) in set((c, s) for c, s, e, _ in m.spans[n])
 			chosen[n].add((p.rname, p.pos0))
 	assert any(len(v) > 1 for v in chosen.values()), chosen
+
+
+@pytest.fixture(scope="module")
+def larger(synth, tmp_path_factory):
+	"""A larger input: 2000 sr pairs (600 kbp; N bases, indels, repeats included) and 180 ONT-like and
+	HiFi-like reads (about 750 kbp) from the whole standard genome, so that -K splits the input into
+	tens of batches and every thread gets reads in each."""
+	d = tmp_path_factory.mktemp("d_inv_large")
+	pairs = H.simulate_pairs(synth.genome, 2000, seed=711, insert_mean=350, insert_sd=60, n_rate=0.001, indel_rate=0.002)
+	p1, p2 = H.write_pairs(str(d / "p1.fq"), str(d / "p2.fq"), pairs)
+	lr = H.simulate_long_reads(synth.genome, 120, profile="ont", seed=712, length=(1000, 6000))
+	lr += H.simulate_long_reads(synth.genome, 60, profile="hifi", seed=713, length=(2000, 8000))
+	return dict(pairs=(p1, p2), long=H.write_fastq(str(d / "long.fq"), lr), n_pairs=len(pairs), n_long=len(lr))
+
+
+LARGER_SPLITS = [["-t", "8", "-K", "50k"], ["-t", "4", "-K", "5k", "-2"], ["-t", "8", "-K", "1"]]
+
+
+@pytest.mark.thread_invariance
+def test_larger_input(synth, larger):
+	"""On the larger input, the same bytes for -t 1 (one batch) and for -t 8 -K 50k, -t 4 -K 5k -2 and
+	-t 8 -K 1 (a batch per read or pair): paired sr SAM with --MD, map-ont SAM with --cs and PAF
+	with -c --ds."""
+	p1, p2 = larger["pairs"]
+	runs = [(["-a", "--MD"], [p1, p2], "sr"), (["-a", "--cs"], [larger["long"]], None), (["-c", "--ds"], [larger["long"]], None)]
+	for args, reads, preset in runs:
+		one = H.map_reads(synth.fasta, reads, args + ["-t", "1"], preset=preset)
+		ref = _body(one)
+		n = len(D.body_lines(ref))
+		assert n >= (2 * larger["n_pairs"] if preset else larger["n_long"]), (args, n)
+		for split in LARGER_SPLITS:
+			assert _body(H.map_reads(synth.fasta, reads, args + split, preset=preset)) == ref, (args, split)

@@ -65,9 +65,10 @@ def test_splice_ont_like_cdna(synth_tx, tmp_path):
 def test_u_option_chooses_strand(synth_tx, hifi_tx):
 	"""-u: f = transcript strand only, r = the reverse, b = both (README: two rounds of alignment,
 	keeping the better one and writing it to ts). On HiFi-like spliced reads:
-	-uf writes ts:A:+ and -ur ts:A:- on every alignment; a read on the assumed strand gets the same
-	CIGAR and AS as with -ub, where ts:A gives its true orientation; a spliced read on the other strand
-	scores lower, because its GT-AG signals are not matched."""
+	-uf writes ts:A:+ and -ur ts:A:- on every spliced alignment (whether unspliced ones carry it is
+	left open: cookbook.md calls the tag spliced-only, base writes it on them too); a read on the
+	assumed strand gets the same CIGAR and AS as with -ub, where ts:A gives its true orientation; a
+	spliced read on the other strand scores lower, because its GT-AG signals are not matched."""
 	reads, fq = hifi_tx["truth"], hifi_tx["fq"]
 	both = _by_name(H.map_reads(synth_tx.fasta, fq, ["-a", "-ub"], preset="splice:hq"))
 	assert H.strip_pg(H.map_reads(synth_tx.fasta, fq, ["-a"], preset="splice:hq").stdout) == \
@@ -75,7 +76,10 @@ def test_u_option_chooses_strand(synth_tx, hifi_tx):
 	n_lower = 0
 	for u, ts in (("f", "+"), ("r", "-")):
 		res = H.map_reads(synth_tx.fasta, fq, ["-a", "-u" + u], preset="splice:hq")
-		assert all(r.tags.get("ts") == ts for r in _recs(res))
+		recs = _recs(res)
+		assert any(r.introns for r in recs)
+		assert all(r.tags.get("ts") == ts for r in recs if r.introns)
+		assert all(r.tags.get("ts") in (ts, None) for r in recs)
 		one = _by_name(res)
 		for name, rd in reads.items():
 			b, o = both[name], one[name]
