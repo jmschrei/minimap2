@@ -188,7 +188,7 @@ def _approx_cigar_ok(entry, rec, read_len):
 
 def test_supplementary_and_sa(synth, mixed, base_sam):
 	"""Chimeric reads give one primary and one or more supplementary records (FLAG 0x800); a
-	supplementary record is hard-clipped and carries the aligned part of the read; each pieces'
+	supplementary record is hard-clipped and carries the aligned part of the read; each piece's
 	records lie at its true contig and strand. Every primary and supplementary record of a split
 	read lists all the others in SA:Z (rname, pos, strand, mapQ and NM as in that record; the
 	approximate CIGAR has its clips and spans), and records of reads that are not split have no SA."""
