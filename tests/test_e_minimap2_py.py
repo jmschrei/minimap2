@@ -85,6 +85,19 @@ def test_min_count(mappy, synth, wd):
 	assert len(got) < len(_got([synth.fasta, fq]))
 
 
+def test_k_and_w_set_the_seed_density(mappy, synth, wd):
+	"""-k and -w are minimap2's: a window of w k-mers keeps about 2/(w+1) of the positions, so with a minimum
+	of 40 minimizers per chain, which short reads survive depends on both. `-k 12 -w 20 -n 40` equals
+	`minimap2 -k12 -w20 -n40`, and differs from changing either value alone."""
+	reads = H.simulate_long_reads(synth.genome, 30, profile="ont", seed=507, unique=True, length=(300, 1500))
+	fq = H.write_fastq(str(wd / "short_kw.fq"), reads)
+	got = _got(["-k", "12", "-w", "20", "-n", "40", synth.fasta, fq])
+	assert got == _expected(synth.fasta, fq, ["-k12", "-w20", "-n40"])
+	assert 0 < len(got) < len(reads)
+	for alone in (["-k12", "-n40"], ["-w20", "-n40"], ["-k20", "-n40"]):
+		assert _expected(synth.fasta, fq, alone) != got, alone
+
+
 def test_band_width(mappy, synth, wd):
 	"""-r INT is the band width (-r of minimap2): with -x sr, 150 bp reads with a 40 bp deletion align in one
 	piece with a 40D by default and in two pieces with -r 10, as `minimap2 -x sr -r 10` does."""
