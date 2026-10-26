@@ -7,7 +7,6 @@ JavaScript shell; these tests skip when k8 is not on PATH.
 """
 
 import gzip
-import os
 
 import pytest
 

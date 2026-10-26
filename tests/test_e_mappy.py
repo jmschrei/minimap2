@@ -21,7 +21,6 @@ import sys
 import pytest
 
 import helpers_e as E
-import minimap2_build
 import minimap2_helpers as H
 
 pytestmark = pytest.mark.mappy
