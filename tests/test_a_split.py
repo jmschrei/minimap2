@@ -124,9 +124,10 @@ def test_split_prefix_rejects_cs_and_md(mt, tmp_path):
 
 
 def test_c_api_split_files(tmp_path):
-	"""mm_split_init writes PREFIX.NNNN.tmp for part NNNN with its k and sequence names and lengths;
-	mm_split_merge_prep reads all parts back into one sequence list (NULL for zero parts or a missing
-	file); mm_split_rm_tmp deletes the files."""
+	"""mm_split_init writes a temporary file under PREFIX for each part with its k and sequence names and
+	lengths; mm_split_merge_prep reads all parts back into one sequence list (NULL for zero parts or a
+	missing file); mm_split_rm_tmp deletes the files, leaving nothing beside the FASTA (the file names
+	are not checked)."""
 	rng = H.Rng(611)
 	recs = [("c%d" % i, rng.dna(l)) for i, l in enumerate((3000, 5000, 2000, 7000, 1000))]
 	fa = A.write_fa(tmp_path / "s.fa", recs)

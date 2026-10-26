@@ -76,7 +76,7 @@ def test_mask_len(overlap):
 	NUM"): with -M 0.1 H2 is secondary only if the read part it alone covers (the uncovered length,
 	from the brute-force chains) is at most NUM."""
 	fa, rq, read, h1, h2 = overlap
-	(s1, qs1, qe1), (s2, qs2, qe2) = h1, h2
+	(s1, _, qe1), (s2, _, qe2) = h1, h2
 	uncov = qe2 - qe1
 	assert _lines(fa, rq, ["-M", "0.1", "-p", "0.5", "--mask-len", uncov]) == [("chr1", "P", s1, s2), ("chr2", "S", s2, None)]
 	assert _lines(fa, rq, ["-M", "0.1", "-p", "0.5", "--mask-len", uncov - 1]) == [("chr1", "P", s1, 0), ("chr2", "P", s2, 0)]
@@ -232,20 +232,64 @@ def test_alt_contigs(alt):
 
 
 @pytest.mark.pinned
-def test_opposite_strand_secondary_retained(tmp_path):
-	"""Records base minimap2's behaviour (undocumented heuristic in mm_select_sub and
-	mm_filter_strand_retained): without -c, a secondary chain on the opposite strand to its primary
-	that scores above 0.8 * -g is kept even below -p, unless much more divergent than the primary.
-	A 6 kbp read with an exact 5 kbp partial copy elsewhere: at -p 0.9 the copy is dropped when it is
-	on the read's strand and kept as a secondary when reverse-complemented; with -c it is dropped."""
+def test_secondaries_below_pri_ratio_pinned(tmp_path):
+	"""Pins the current output where base minimap2 writes a secondary below the -p ratio
+	(known-bugs/r1-secondary-below-pri-ratio.md; mm_select_sub keeps a secondary within 2k of its
+	primary, and one on the opposite strand scoring above 0.8 * -g). Two cases, PAF with and without -c:
+	a 6 kbp read with an exact 5 kbp partial copy elsewhere, on the read's strand or reverse-complemented,
+	at -p 0.9; and a 600 bp read whose copy elsewhere has one substitution, so its chaining score is 16
+	below the primary's (between k and 2k), at -p 1."""
 	rng = H.Rng(47)
 	c1, c2 = rng.dna(30000), rng.dna(30000)
 	U = c1[5000:11000]
-	rq = H.write_fasta(str(tmp_path / "u.fa"), [("u", U)])
+	out = []
 	for strand in ("+", "-"):
 		part = U[:5000] if strand == "+" else H.revcomp(U[:5000])
 		fa = H.write_fasta(str(tmp_path / ("sr%s.fa" % ("p" if strand == "+" else "m"))), [("chr1", c1), ("chr2", c2[:10000] + part + c2[15000:])])
-		paf = H.map_reads(fa, rq, ["-p", "0.9"]).paf()
-		want = [("chr1", "+", "P")] + ([("chr2", "-", "S")] if strand == "-" else [])
-		assert [(p.tname, p.strand, p.tags["tp"]) for p in paf] == want, (strand, paf)
-		assert [(p.tname, p.tags["tp"]) for p in H.map_reads(fa, rq, ["-p", "0.9", "-c"]).paf()] == [("chr1", "P")]
+		rq = H.write_fasta(str(tmp_path / "u.fa"), [("u" + strand, U)])
+		for extra in ([], ["-c"]):
+			out.append(H.map_reads(fa, rq, ["-p", "0.9"] + extra).stdout)
+	rng = H.Rng(25)
+	c1, c2 = rng.dna(12000), rng.dna(12000)
+	V = c1[5000:5600]
+	cp = V[:300] + [c for c in "ACGT" if c != V[300]][0] + V[301:]
+	fa = H.write_fasta(str(tmp_path / "tol.fa"), [("chr1", c1), ("chr2", c2[:5000] + cp + c2[5600:])])
+	rq = H.write_fasta(str(tmp_path / "v.fa"), [("v", V)])
+	idx = B.MinimizerIndex({"chr1": c1, "chr2": c2[:5000] + cp + c2[5600:]}, 10, 15)
+	S1, S2 = _chain(V, idx, "chr1")[0], _chain(V, idx, "chr2")[0]
+	assert 15 < S1 - S2 <= 30
+	for extra in ([], ["-c"]):
+		out.append(H.map_reads(fa, rq, ["-p", "1"] + extra).stdout)
+	H.check_pinned("b/secondary-below-pri-ratio.paf", "".join(out))
+
+
+@pytest.mark.pinned
+def test_mapq_near_identical_copies_pinned(tmp_path):
+	"""A 400 bp read from chr1 against targets holding 0 to 3 other copies of it, each one substitution
+	away (at different places), mapped with -c under map-ont and map-hifi. Independently: the primary is
+	the exact copy, every other copy is a secondary, and the primary's MAPQ (SAM: -10 log10 of the
+	probability that the placement is wrong) never rises as copies are added. The MAPQ values and the
+	rest of the lines are pinned: they exercise the sub-optimal hit count (n_sub) of the MAPQ formula,
+	which minimap2 does not document."""
+	rng = H.Rng(25)
+	c1 = rng.dna(12000)
+	V = c1[5000:5400]
+	others = [rng.dna(12000) for _ in range(3)]
+	copies = [V[:p] + [c for c in "ACGT" if c != V[p]][0] + V[p + 1:] for p in (200, 100, 300)]
+	rq = H.write_fasta(str(tmp_path / "w.fa"), [("w", V)])
+	out = []
+	for preset in ("map-ont", "map-hifi"):
+		last = 61
+		for k in range(4):
+			recs = [("chr1", c1)] + [("chr%d" % (j + 2), others[j][:5000] + copies[j] + others[j][5400:]) for j in range(k)] + \
+				[("chr%d" % (j + 2), others[j]) for j in range(k, 3)]
+			fa = H.write_fasta(str(tmp_path / ("c%d.fa" % k)), recs)
+			text = H.map_reads(fa, rq, ["-c"], preset=preset).stdout
+			paf = H.parse_paf(text)
+			prim = [p for p in paf if p.is_primary]
+			assert [(p.tname, p.tstart, p.tend) for p in prim] == [("chr1", 5000, 5400)], (preset, k, text)
+			assert sorted((p.tname, p.tstart) for p in paf if p.tags["tp"] == "S") == [("chr%d" % (j + 2), 5000) for j in range(k)], (preset, k, text)
+			assert prim[0].mapq <= last, (preset, k, prim[0].mapq, last)
+			last = prim[0].mapq
+			out.append(text)
+	H.check_pinned("b/mapq-near-copies.paf", "".join(out))

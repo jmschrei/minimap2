@@ -141,6 +141,30 @@ def test_end_bonus_boundary(clean, tmp_path):
 		assert len(p) == 1 and p[0].qstart == 0 and p[0].qend == qend, (bonus, D, p)
 
 
+def test_end_bonus_boundary_left(clean, tmp_path):
+	"""--end-bonus at the read start: as test_end_bonus_boundary, mirrored. A read of 900 reference bases
+	whose first 7 bases match nothing nearby; the left extension (from the first anchor towards the read
+	start) stops at the best score unless reaching the read start scores more with the bonus. With D the
+	drop from the best extension score to the best score ending at the read start (brute-force extension
+	DP on the reversed sequences), --end-bonus D leaves the 7 bases clipped and D+1 aligns them."""
+	ref = clean.genome["chr2"]
+	start = 25000
+	seq = list(ref[start:start + 900])
+	for i in range(7):
+		bad = set(ref[start + i - 1:start + i + 2].upper())
+		seq[i] = [c for c in "ACGT" if c not in bad][0]
+	seq = "".join(seq)
+	head_q = seq[:100][::-1]
+	head_t = ref[start - 200:start + 100][::-1]
+	mx, mqe = B.affine_ext(head_q, head_t, 2, 4, 4, 2, 24, 1)
+	D = mx - mqe
+	assert 7 < D < 30
+	fa = H.write_fasta(str(tmp_path / "ebl.fa"), [("ebl", seq)])
+	for bonus, qstart in ((D, 7), (D + 1, 0), (0, 7), (200, 0)):
+		p = H.map_reads(clean.fasta, fa, ["-c", "--end-bonus", bonus]).paf()
+		assert len(p) == 1 and p[0].qstart == qstart and p[0].qend == 900, (bonus, D, p)
+
+
 def test_zdrop_boundary(clean, tmp_path):
 	"""-z INT: a read of 2000 reference bases, 300 bases with 50% substitutions and 2000 more. Let D
 	be the largest Z-drop along its unbroken alignment (from -z 10000): the running score's fall below

@@ -73,9 +73,10 @@ static int case_mz_flt(int argc, char *argv[])
 	return 0;
 }
 
-/* args: target.fa w k query.fa max_occ max_max_occ dist exp_n_a exp_n_mini_pos exp_rep_len(-1: unchecked)
+/* args: target.fa w k query.fa max_occ max_max_occ dist exp_n_a exp_n_mini_pos exp_rep_len(-1: unchecked) [out]
  * mm_collect_matches on the query's minimizers: the anchors (sum of the occurrences of the kept
- * seeds), the kept query minimizers and the repetitive query length agree with brute force. */
+ * seeds), the kept query minimizers and the repetitive query length agree with brute force. With out,
+ * the query positions of the kept minimizers are written to it, one per line. */
 static int case_collect(int argc, char *argv[])
 {
 	mm_idx_t *mi;
@@ -101,6 +102,12 @@ static int case_collect(int argc, char *argv[])
 		MMT_CHECKF((uint32_t)mini_pos[i] > (uint32_t)mini_pos[i-1] && (mini_pos[i] >> 32) == (uint64_t)k, "mini_pos %d not increasing or span not k", i);
 	for (i = 0; i < n_m; ++i)
 		MMT_CHECKF(m[i].n > 0 && (int)m[i].n <= (dist > 0 && max_max_occ > max_occ? max_max_occ : max_occ), "seed %d has %u occurrences", i, m[i].n);
+	if (argc > 10) {
+		FILE *fp = fopen(argv[10], "w");
+		MMT_REQUIRE(fp != 0);
+		for (i = 0; i < n_mini_pos; ++i) fprintf(fp, "%u\n", (uint32_t)mini_pos[i]);
+		fclose(fp);
+	}
 	kfree(km, m); kfree(km, mini_pos); kfree(km, mv.a);
 	km_destroy(km);
 	mmt_free_seqs(&s);

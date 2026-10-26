@@ -383,6 +383,93 @@ static int case_random_dp(int argc, char *argv[])
 	return 0;
 }
 
+static uint64_t fnv64(uint64_t h, uint64_t x)
+{
+	int k;
+	for (k = 0; k < 8; ++k, x >>= 8) h = (h ^ (x & 0xff)) * 0x100000001b3ULL;
+	return h;
+}
+
+static int cmp_chain_key(const void *a, const void *b)
+{
+	const uint64_t *x = (const uint64_t*)a, *y = (const uint64_t*)b;
+	return x[0] < y[0]? -1 : x[0] > y[0]? 1 : x[1] < y[1]? -1 : x[1] > y[1];
+}
+
+/* one line for a chaining result, independent of the order of the chains: the number of chains and a
+ * hash of the sorted (score << 32 | count, hash of the chain's anchors) pairs */
+static void put_chains(FILE *fp, int set, int cfg, const chains_t *c)
+{
+	uint64_t *key = (uint64_t*)malloc((c->n_u + 1) * 16), h = 0xcbf29ce484222325ULL;
+	int i, j, k = 0;
+	for (j = 0; j < c->n_u; ++j) {
+		uint64_t ha = 0xcbf29ce484222325ULL;
+		for (i = 0; i < chain_cnt(c, j); ++i)
+			ha = fnv64(fnv64(ha, c->a[k + i].x), c->a[k + i].y);
+		key[2*j] = c->u[j], key[2*j+1] = ha;
+		k += chain_cnt(c, j);
+	}
+	qsort(key, c->n_u, 16, cmp_chain_key);
+	for (j = 0; j < c->n_u; ++j) h = fnv64(fnv64(h, key[2*j]), key[2*j+1]);
+	fprintf(fp, "%d\t%d\t%d\t%d\t%016llx\n", set, cfg, c->n_u, c->n_u? chain_score(c, 0) : 0, (unsigned long long)h);
+	free(key);
+}
+
+/* args: seed n_sets out. Random anchor sets as in random_dp, chained with the heuristics on: DP with
+ * the defaults (--max-chain-skip 25, --max-chain-iter 5000), --max-chain-skip 0, --max-chain-iter 1 and
+ * 3 (--max-chain-skip 2), and RMQ with --rmq-inner 1000, 40 and 0. Their results are not documented
+ * beyond "heuristics", so each one's chains (scores, counts and anchors) are written as one line for a
+ * pin; every chain is still checked to be collinear on one contig and strand. */
+static int case_heuristics(int argc, char *argv[])
+{
+	static const struct { int rmq, max_skip, max_iter, inner; } cfg[] = {
+		{ 0, 25, 5000, 0 }, { 0, 0, 5000, 0 }, { 0, 25, 1, 0 }, { 0, 2, 3, 0 }, { 1, 25, 0, 1000 }, { 1, 25, 0, 40 }, { 1, 25, 0, 0 }
+	};
+	void *km = km_init();
+	int s, n_sets, h;
+	FILE *fp;
+	if (argc < 3) return MMT_FAIL("usage: heuristics <seed> <n_sets> <out>"), 1;
+	rng_state = strtoull(argv[0], 0, 10), n_sets = atoi(argv[1]);
+	MMT_REQUIRE((fp = fopen(argv[2], "w")) != 0);
+	for (s = 0; s < n_sets; ++s) {
+		mm128_t *in;
+		int n = 0, m = rng_int(20, 300), i, j;
+		in = (mm128_t*)malloc(m * sizeof(mm128_t));
+		while (n < m) {
+			int rev = rng_int(0, 1), cid = rng_int(0, 1), len = rng_int(3, 40), x = rng_int(0, 20000), y = rng_int(0, 5000);
+			for (i = 0; i < len && n < m; ++i) {
+				int dx = rng_int(3, 25), dy = dx;
+				if (rng_int(0, 6) == 0) dx += rng_int(1, 30);
+				else if (rng_int(0, 6) == 0) dy += rng_int(1, 30);
+				x += dx, y += dy;
+				in[n++] = anchor(rev, cid, x, y, 15);
+			}
+			if (rng_int(0, 1) == 0 && n < m) in[n++] = anchor(rng_int(0, 1), rng_int(0, 1), rng_int(0, 30000), rng_int(0, 8000), 15);
+		}
+		radix_sort_128x(in, in + n);
+		for (h = 0; h < (int)(sizeof(cfg) / sizeof(cfg[0])); ++h) {
+			chains_t c;
+			if (cfg[h].rmq) {
+				rmq_inner = cfg[h].inner;
+				run_chain(km, 1, in, n, 5000, 500, cfg[h].max_skip, 5000, 1, 1, 0.8f, 0.0f, 15, &c);
+			} else run_chain(km, 0, in, n, 5000, 500, cfg[h].max_skip, cfg[h].max_iter, 1, 1, 0.8f, 0.0f, 15, &c);
+			for (j = 0, i = 0; j < c.n_u; i += chain_cnt(&c, j), ++j) {
+				int l, ok = 1;
+				for (l = 1; l < chain_cnt(&c, j); ++l)
+					if (c.a[i+l].x >> 32 != c.a[i].x >> 32 || (int32_t)c.a[i+l].x <= (int32_t)c.a[i+l-1].x || (int32_t)c.a[i+l].y <= (int32_t)c.a[i+l-1].y) ok = 0;
+				MMT_CHECKF(ok, "set %d config %d chain %d: anchors not collinear", s, h, j);
+			}
+			put_chains(fp, s, h, &c);
+			free_chains(km, &c);
+		}
+		free(in);
+	}
+	rmq_inner = 1000;
+	fclose(fp);
+	km_destroy(km);
+	return 0;
+}
+
 static int cmp_u64(const void *a, const void *b)
 {
 	uint64_t x = *(const uint64_t*)a, y = *(const uint64_t*)b;
@@ -456,6 +543,7 @@ static const mmt_case_t cases[] = {
 	{ "min_cnt_sc", case_min_cnt_sc },
 	{ "max_iter", case_max_iter },
 	{ "random_dp", case_random_dp },
+	{ "heuristics", case_heuristics },
 	{ "sorts", case_sorts },
 	{ 0, 0 }
 };

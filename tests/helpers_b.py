@@ -16,6 +16,8 @@ not from its code paths, so tests can derive expected values independently:
 	cigar_score_full            CIGAR score with -A/-B/-b/-O/-E/--score-N
 	peak_score                  the max-scoring segment of an alignment (ms:i, -s)
 	affine_global / affine_ext  brute-force two-piece affine alignment (Gotoh)
+	many_copy_genome            a 160 kbp genome with a 120-copy family (high-occurrence seeds)
+	large_genome                a 1.5 Mbp genome for thread-invariance and pinned output
 """
 
 import math
@@ -431,3 +433,28 @@ def local_score(qs, ts, a=2, b=4, q=4, e=2):
 			best = max(best, h)
 		Hp = Hc
 	return best
+
+
+def many_copy_genome():
+	"""A 160 kbp random genome (100 and 60 kbp contigs) with one family of 120 copies of a 300 bp unit at
+	2% divergence, each on a random strand: the unit's minimizers occur up to 96 times, so the -f
+	thresholds of the default fractions (92 at 0.0002, 80 at 0.002) fall inside the family's counts.
+	Seed 37 is one whose brute-force minimizers have no tied window (helpers_b.minimizers raises on one).
+	Returns (Genome, [(contig, start, end, strand)] of the copies)."""
+	g = H.make_genome(seed=37, contig_lengths=(100000, 60000), repeat_families=1, repeat_copies=120, repeat_len=(300, 300),
+		repeat_divergence=0.02)
+	copies = [(f.contig, f.start, f.end, f.info[2]) for f in g.features if f.kind == "repeat"]
+	return g, copies
+
+
+def large_genome():
+	"""1.5 Mbp: chr1 (600 kbp) and chr2 (400 kbp) with six families of three 1-4 kbp segmental duplications
+	at 0.5% divergence, four inverted repeats, eight low-complexity tracts and three N runs; chr3 (500 kbp)
+	with a family of 150 copies of a 280-320 bp unit at 3% divergence (an Alu-like family whose
+	minimizers exceed the default occurrence thresholds, so high-occurrence seeds are filtered and
+	sampled) and four low-complexity tracts. Changing it changes the pins built on it."""
+	a = H.make_genome(seed=91, contig_lengths=(600000, 400000), repeat_families=6, repeat_copies=3, repeat_len=(1000, 4000),
+		repeat_divergence=0.005, inversions=4, low_complexity=8, n_runs=3)
+	b = H.make_genome(seed=92, contig_lengths=(500000,), names=["chr3"], repeat_families=1, repeat_copies=150,
+		repeat_len=(280, 320), repeat_divergence=0.03, low_complexity=4)
+	return H.Genome([(n, a[n]) for n in a.names] + [("chr3", b["chr3"])], a.features + b.features)

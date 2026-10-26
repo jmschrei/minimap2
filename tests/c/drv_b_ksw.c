@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <limits.h>
 #include "ksw2.h"
 #include "minimap2_test.h"
 
@@ -765,13 +766,185 @@ static int case_variants_splice(int argc, char *argv[])
 	return 0;
 }
 
+/* the largest |t - q| over the cells a CIGAR passes through, from (0,0) (-1 for a malformed CIGAR) */
+static int cigar_max_diag(int n_cigar, const uint32_t *cigar)
+{
+	int k, i = 0, j = 0, d = 0;
+	for (k = 0; k < n_cigar; ++k) {
+		int op = cigar[k] & 0xf, len = cigar[k] >> 4;
+		if (op == KSW_CIGAR_MATCH) i += len, j += len;
+		else if (op == KSW_CIGAR_INS) i += len;
+		else if (op == KSW_CIGAR_DEL) j += len;
+		else return -1;
+		if ((j - i > 0? j - i : i - j) > d) d = j - i > 0? j - i : i - j;
+	}
+	return d;
+}
+
+/* args: seed n max_len out. Narrow bands: w is |qlen - tlen| plus 0 to 40, so the end cell of a global
+ * alignment lies on or near the band edge, where the kernels may report a score the banded optimum
+ * does not reach (known-bugs/b-ksw2-banded-score.md). What the kernels guarantee there: the global
+ * CIGAR covers both sequences and is a valid alignment, which scores no more than the unbanded
+ * optimum; an extension's CIGAR ends at the cell it reports. Every result (score, max and end cells,
+ * flags, CIGAR) is written to out, one line per case, for a pin. */
+static int case_band_edge(int argc, char *argv[])
+{
+	int n, max_len, it, n_diff = 0, n_outside = 0, n_edge = 0;
+	uint8_t *t, *qq;
+	FILE *fp;
+	if (argc < 4) return MMT_FAIL("usage: band_edge <seed> <n> <max_len> <out>"), 1;
+	rng_state = strtoull(argv[0], 0, 10), n = atoi(argv[1]), max_len = atoi(argv[2]);
+	MMT_REQUIRE((fp = fopen(argv[3], "w")) != 0);
+	t = (uint8_t*)malloc(max_len + 64), qq = (uint8_t*)malloc(max_len + 64);
+	for (it = 0; it < n; ++it) {
+		int a, b, q, e, q2, e2, tlen, qlen, w, qspan, tspan, kind = it % 2, ext = it % 3 == 2, k;
+		int flag = (ext? KSW_EZ_EXTZ_ONLY : 0) | (it % 5 == 1? KSW_EZ_RIGHT : 0) | (it % 7 == 3? KSW_EZ_APPROX_MAX : 0);
+		int zdrop = it % 4 == 3? rng_int(20, 100) : -1, end_bonus = ext? rng_int(0, 20) : 0;
+		int32_t want, cs;
+		int8_t mat[25];
+		ref_t R;
+		ksw_extz_t ez;
+		rand_params(kind, &a, &b, &q, &e, &q2, &e2);
+		rand_pair(max_len, it % 4 == 1? 20 : 0, t, &tlen, qq, &qlen);
+		if (it % 3 == 0) { /* a long indel near the middle, so the path drifts towards the band edge */
+			int l = rng_int(5, 40), pos;
+			if (rng_int(0, 1)) {
+				pos = qlen / 2;
+				memmove(qq + pos + l, qq + pos, qlen - pos);
+				for (k = 0; k < l; ++k) qq[pos + k] = rng_int(0, 3);
+				qlen += l;
+			} else {
+				pos = tlen / 2;
+				memmove(t + pos + l, t + pos, tlen - pos);
+				for (k = 0; k < l; ++k) t[pos + k] = rng_int(0, 3);
+				tlen += l;
+			}
+		}
+		w = (qlen > tlen? qlen - tlen : tlen - qlen) + rng_int(0, 40);
+		gen_mat(mat, a, b, 0, 1);
+		ref_dp(&R, qlen, qq, tlen, t, mat, q, e, q2, e2, -1);
+		want = ref_at(&R, qlen, tlen);
+		memset(&ez, 0, sizeof(ez));
+		run_kernel(kind, 0, qlen, qq, tlen, t, mat, q, e, q2, e2, w, zdrop, end_bonus, flag, &ez);
+		fprintf(fp, "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t", it, kind, qlen, tlen, w, flag, ez.score, ez.max, ez.max_q, ez.max_t,
+				ez.mqe, ez.mqe_t, ez.mte, ez.mte_q, ez.zdropped, ez.reach_end);
+		for (k = 0; k < ez.n_cigar; ++k) fprintf(fp, "%d%c", ez.cigar[k]>>4, "MIDN"[ez.cigar[k]&0xf]);
+		fputc('\n', fp);
+		if (ez.n_cigar > 0) {
+			int ok = cigar_eval(ez.n_cigar, ez.cigar, qq, t, mat, q, e, q2, e2, &qspan, &tspan, &cs);
+			int d = cigar_max_diag(ez.n_cigar, ez.cigar);
+			MMT_CHECKF(ok, "case %d (kind %d, qlen %d, tlen %d, w %d, flag %x): malformed CIGAR", it, kind, qlen, tlen, w, flag);
+			if (!ok) { ref_free(&R); ez_free(&ez); continue; }
+			if (!ext && !ez.zdropped) {
+				MMT_CHECKF(cs <= want, "case %d: the CIGAR scores %d, above the unbanded optimum %d", it, cs, want);
+				MMT_CHECKF(qspan == qlen && tspan == tlen, "case %d (kind %d, qlen %d, tlen %d, w %d, flag %x): global CIGAR spans %d/%d", it, kind, qlen, tlen, w, flag, qspan, tspan);
+				n_diff += cs != ez.score;
+			} else if (ext && ez.reach_end) {
+				MMT_CHECKF(qspan == qlen && tspan == ez.mqe_t + 1, "case %d: reach_end CIGAR spans %d/%d, want %d/%d", it, qspan, tspan, qlen, ez.mqe_t + 1);
+			} else if (ext) {
+				MMT_CHECKF(qspan == ez.max_q + 1 && tspan == ez.max_t + 1, "case %d: extension CIGAR spans %d/%d, want %d/%d", it, qspan, tspan, ez.max_q + 1, ez.max_t + 1);
+			}
+			n_outside += d > w;
+			n_edge += d >= w - 2;
+		}
+		ref_free(&R); ez_free(&ez);
+	}
+	mmt_note("band_edge: %d global scores differ from their CIGAR's score; %d CIGARs leave the band; %d come within 2 of its edge", n_diff, n_outside, n_edge);
+	fclose(fp);
+	free(t); free(qq);
+	return 0;
+}
+
+/* Z-drop of an unbanded extension by brute force (minimap2 paper, Z-drop; ksw_apply_zdrop): for each
+ * anti-diagonal r = q + t, its best cell (H, t); a new best score moves the max cell, otherwise a cell
+ * down and right of the max cell drops max - H - e*|(t - max_t) - (q - max_q)|. Returns the largest
+ * drop, or INT32_MIN if an anti-diagonal's best cell is tied so that the drop or the max cell depends
+ * on which tied cell a kernel picks (not documented). */
+static int32_t ref_zdrop(const ref_t *R, int e)
+{
+	int r, i, j;
+	int32_t mx = 0, max_t = -1, max_q = -1, best = INT32_MIN;
+	for (r = 0; r <= R->qlen + R->tlen - 2; ++r) {
+		int32_t h = INT32_MIN, d = INT32_MIN, n_tie = 0, d_set = 0, amb = 0;
+		for (j = 0; j <= r && j < R->tlen; ++j) { /* t = j, q = r - j */
+			i = r - j;
+			if (i >= R->qlen) continue;
+			if (ref_at(R, i + 1, j + 1) > h) h = ref_at(R, i + 1, j + 1), n_tie = 1;
+			else if (ref_at(R, i + 1, j + 1) == h) ++n_tie;
+		}
+		if (h > mx) {
+			if (n_tie > 1) return INT32_MIN;
+			for (j = 0; j <= r && j < R->tlen; ++j)
+				if (r - j < R->qlen && ref_at(R, r - j + 1, j + 1) == h) max_t = j, max_q = r - j;
+			mx = h;
+			continue;
+		}
+		for (j = 0; j <= r && j < R->tlen; ++j) { /* every tied best cell must give the same verdict */
+			int32_t dj = INT32_MIN;
+			i = r - j;
+			if (i >= R->qlen || ref_at(R, i + 1, j + 1) != h) continue;
+			if (j >= max_t && i >= max_q) {
+				int tl = j - max_t, ql = i - max_q;
+				dj = mx - h - e * (tl > ql? tl - ql : ql - tl);
+			}
+			if (d_set && dj != d) amb = 1;
+			d = dj, d_set = 1;
+		}
+		if (amb) return INT32_MIN;
+		if (d > best) best = d;
+	}
+	return best;
+}
+
+/* args: seed n. The Z-drop threshold is strict: an exact match of 20-80 bases followed by unrelated
+ * tails, extended with KSW_EZ_EXTZ_ONLY and no band; with Z the largest drop along the extension
+ * (brute force), zdrop Z runs to the end and zdrop Z-1 stops (zdropped). ksw_extd2 weighs the change
+ * of diagonal by its second gap extension e2, ksw_extz2 by e. Cases whose anti-diagonal maxima are tied
+ * in a way that changes the drop are skipped. */
+static int case_zdrop_boundary(int argc, char *argv[])
+{
+	int n, it, n_checked = 0;
+	uint8_t t[256], qq[256];
+	if (argc < 2) return MMT_FAIL("usage: zdrop_boundary <seed> <n>"), 1;
+	rng_state = strtoull(argv[0], 0, 10), n = atoi(argv[1]);
+	for (it = 0; it < n; ++it) {
+		int a, b, q, e, q2, e2, kind = it % 2, i, L = rng_int(20, 80), tl = L + rng_int(20, 100), ql = L + rng_int(20, 100);
+		int32_t Z;
+		int8_t mat[25];
+		ref_t R;
+		ksw_extz_t ez;
+		rand_params(kind, &a, &b, &q, &e, &q2, &e2);
+		for (i = 0; i < L; ++i) t[i] = qq[i] = rng_int(0, 3);
+		for (i = L; i < tl; ++i) t[i] = rng_int(0, 3);
+		for (i = L; i < ql; ++i) qq[i] = rng_int(0, 3);
+		gen_mat(mat, a, b, 0, 1);
+		ref_dp(&R, ql, qq, tl, t, mat, q, e, q2, e2, -1);
+		Z = ref_zdrop(&R, kind? e2 : e);
+		ref_free(&R);
+		if (Z == INT32_MIN || Z < 1) continue;
+		++n_checked;
+		memset(&ez, 0, sizeof(ez));
+		run_kernel(kind, 0, ql, qq, tl, t, mat, q, e, q2, e2, -1, Z, 0, KSW_EZ_EXTZ_ONLY, &ez);
+		MMT_CHECKF(!ez.zdropped, "case %d (kind %d, L %d, qlen %d, tlen %d, a%d b%d q%d e%d q2%d e2%d): zdrop %d = the largest drop stopped the extension", it, kind, L, ql, tl, a, b, q, e, q2, e2, Z);
+		ez_free(&ez);
+		run_kernel(kind, 0, ql, qq, tl, t, mat, q, e, q2, e2, -1, Z - 1, 0, KSW_EZ_EXTZ_ONLY, &ez);
+		MMT_CHECKF(ez.zdropped, "case %d (kind %d, L %d, qlen %d, tlen %d, a%d b%d q%d e%d q2%d e2%d): zdrop %d did not stop the extension", it, kind, L, ql, tl, a, b, q, e, q2, e2, Z - 1);
+		ez_free(&ez);
+	}
+	mmt_note("zdrop_boundary: %d of %d cases without ties checked", n_checked, n);
+	MMT_CHECKF(n_checked >= n / 6, "too few cases without ties (%d of %d)", n_checked, n);
+	return 0;
+}
+
 static const mmt_case_t cases[] = {
 	{ "global", case_global },
 	{ "extension", case_extension },
 	{ "generic_matrix", case_generic_matrix },
 	{ "gap_alignment", case_gap_alignment },
 	{ "zdrop", case_zdrop },
+	{ "zdrop_boundary", case_zdrop_boundary },
 	{ "band_deletion", case_band_deletion },
+	{ "band_edge", case_band_edge },
 	{ "empty", case_empty },
 	{ "ll_i16", case_ll_i16 },
 	{ "exts2_intron", case_exts2_intron },

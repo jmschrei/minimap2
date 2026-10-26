@@ -45,6 +45,14 @@ def test_zdrop_stops_extension():
 	H.assert_c_case("drv_b_ksw", "zdrop")
 
 
+def test_zdrop_threshold_is_strict():
+	"""Z-drop (-z; the minimap2 paper: stop when the score falls more than Z + e*|diagonal change| below
+	the best cell): on 600 extensions of an exact 20-80 base match into unrelated tails, with Z the
+	largest such drop from a brute-force DP (over each anti-diagonal's best cell; e2 for ksw_extd2),
+	zdrop Z runs to the end and Z-1 stops. Cases where tied cells would change the drop are skipped."""
+	H.assert_c_case("drv_b_ksw", "zdrop_boundary", 71, 600)
+
+
 def test_band_limits_global_alignment():
 	"""The band (-r): a 300-base pair differing by a d-base deletion aligns as 120M dD (180-d)M when
 	the band w >= d, and its end is unreachable (zdropped, score KSW_NEG_INF) when w < d."""
@@ -88,3 +96,17 @@ def test_simd_variants_agree_spliced():
 	"""As test_simd_variants_agree for ksw_exts2 (both splice strands, flanking and complex splice
 	models, extension and approximate max)."""
 	H.assert_c_case("drv_b_ksw", "variants_splice", 51, 300, 150)
+
+
+@pytest.mark.pinned
+def test_narrow_band_edge(tmp_path):
+	"""Pins the current output of ksw_extz2/ksw_extd2 on 600 random pairs whose band w is |qlen - tlen|
+	plus 0 to 40, so the end cell lies on or near the band edge (global and extension, with end bonus,
+	Z-drop, KSW_EZ_RIGHT and KSW_EZ_APPROX_MAX; some with a 5-40 base indel). There the kernels can report
+	a score no alignment reaches and a CIGAR leaving the band (known-bugs/b-ksw2-banded-score.md), so the
+	pin guards the exact results. Independently: every CIGAR is well formed; a global CIGAR not cut by
+	Z-drop covers both sequences and scores at most the unbanded optimum; an extension CIGAR ends at the
+	cell the kernel reports (the query end with reach_end, else the max cell)."""
+	out = str(tmp_path / "band_edge.tsv")
+	H.assert_c_case("drv_b_ksw", "band_edge", 61, 600, 150, out)
+	H.check_pinned("b/ksw-band-edge.tsv.gz", H.read_text(out))

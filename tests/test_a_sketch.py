@@ -195,3 +195,61 @@ def test_sketch_with_kalloc_pool_and_appending(tmp_path):
 	recs = _random_records(71, 10, 15) + [("lc", "ACACACACAC" * 30 + "GATTACA" * 20)]
 	for w, k, hpc in ((10, 15, 0), (5, 19, 1)):
 		H.assert_c_case("drv_a_sketch", "km_append", A.write_fa(tmp_path / "km.fa", recs), w, k, hpc)
+
+
+def _palindrome(rng, half):
+	x = rng.dna(half)
+	return x + H.revcomp(x)
+
+
+@pytest.mark.parametrize("k", [16, 14])
+def test_palindromic_kmers_are_never_minimizers(tmp_path, k):
+	"""Even k: a k-mer equal to its reverse complement has no strand, and mm_sketch() skips it (the
+	comment in sketch.c: symmetric k-mers are skipped as their strand is unknown); it takes no place in
+	any window. With w 1, where every other k-mer is a minimizer, no minimizer ends at a planted
+	palindromic k-mer, and the k-mers just before and after each palindrome are minimizers."""
+	rng = H.Rng(71 + k)
+	parts, pal_ends = [], []
+	pos = 0
+	for i in range(12):
+		flank = rng.dna(rng.randint(40, 90))
+		p = _palindrome(rng, k // 2)
+		parts += [flank, p]
+		pos += len(flank) + k
+		pal_ends.append(pos - 1)
+	parts.append(rng.dna(60))
+	seq = "".join(parts)
+	got = _dump(tmp_path, [("pal", seq)], 1, k, False, tag="pal%d" % k)[0]
+	ends = set(q.pos for q in got)
+	for e in pal_ends:
+		assert seq[e - k + 1:e + 1] == H.revcomp(seq[e - k + 1:e + 1])
+		assert e not in ends, (k, e)
+		assert e - 1 in ends and e + 1 in ends, (k, e)
+	assert all(seq[q.pos - k + 1:q.pos + 1] != H.revcomp(seq[q.pos - k + 1:q.pos + 1]) for q in got)
+
+
+def test_hpc_kmers_spanning_256_bases_or_more(tmp_path):
+	"""-H stores a k-mer's span in 8 bits (x = hash<<8 | span, documented above mm_sketch()), so a
+	homopolymer-compressed k-mer spanning 256 bases or more is never a minimizer, while one spanning 255
+	is. Runs of 10-25 bases make the spans of k = 15 compressed k-mers range around 255; with w 1 every
+	k-mer spanning at most 255 bases is a minimizer, and with w 5 the windows follow the reference scan
+	(such long k-mers keep their place in a window without being a minimum)."""
+	rng = H.Rng(83)
+	runs = []
+	while len(runs) < 400:
+		c = rng.choice("ACGT")
+		if runs and runs[-1][0] == c:
+			continue
+		runs.append((c, rng.randint(10, 25)))
+	seq = "".join(c * n for c, n in runs)
+	for w in (1, 5):
+		ref = A.SketchRef(seq, w, 15, True)
+		if ref.has_ties:
+			continue
+		got = _dump(tmp_path, [("hp", seq)], w, 15, True, tag="hp256_%d" % w)[0]
+		assert got == ref.minimizers(), w
+	spans = [sum(n for _, n in runs[j - 14:j + 1]) for j in range(14, len(runs))]
+	assert 255 in spans and any(s >= 256 for s in spans) and any(s < 255 for s in spans)
+	got1 = _dump(tmp_path, [("hp", seq)], 1, 15, True, tag="hp256_w1")[0]
+	assert 255 in [q.x & 0xff for q in got1]
+	assert len(got1) == sum(1 for s in spans if s < 256)

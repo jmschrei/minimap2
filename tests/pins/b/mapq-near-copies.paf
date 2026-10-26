@@ -1,0 +1,20 @@
+w	400	0	400	+	chr1	12000	5000	5400	400	400	60	NM:i:0	ms:i:800	AS:i:800	nn:i:0	tp:A:P	cm:i:72	s1:i:400	s2:i:0	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr1	12000	5000	5400	400	400	6	NM:i:0	ms:i:800	AS:i:800	nn:i:0	tp:A:P	cm:i:72	s1:i:400	s2:i:395	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr2	12000	5000	5400	399	400	0	NM:i:1	ms:i:794	AS:i:794	nn:i:0	tp:A:S	cm:i:70	s1:i:395	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr1	12000	5000	5400	400	400	4	NM:i:0	ms:i:800	AS:i:800	nn:i:0	tp:A:P	cm:i:72	s1:i:400	s2:i:395	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr3	12000	5000	5400	399	400	0	NM:i:1	ms:i:794	AS:i:794	nn:i:0	tp:A:S	cm:i:70	s1:i:390	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr2	12000	5000	5400	399	400	0	NM:i:1	ms:i:794	AS:i:794	nn:i:0	tp:A:S	cm:i:70	s1:i:395	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr1	12000	5000	5400	400	400	3	NM:i:0	ms:i:800	AS:i:800	nn:i:0	tp:A:P	cm:i:72	s1:i:400	s2:i:395	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr4	12000	5000	5400	399	400	0	NM:i:1	ms:i:794	AS:i:794	nn:i:0	tp:A:S	cm:i:69	s1:i:384	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr3	12000	5000	5400	399	400	0	NM:i:1	ms:i:794	AS:i:794	nn:i:0	tp:A:S	cm:i:70	s1:i:390	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr2	12000	5000	5400	399	400	0	NM:i:1	ms:i:794	AS:i:794	nn:i:0	tp:A:S	cm:i:70	s1:i:395	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr1	12000	5000	5400	400	400	60	NM:i:0	ms:i:400	AS:i:400	nn:i:0	tp:A:P	cm:i:37	s1:i:373	s2:i:0	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr1	12000	5000	5400	400	400	14	NM:i:0	ms:i:400	AS:i:400	nn:i:0	tp:A:P	cm:i:37	s1:i:373	s2:i:364	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr2	12000	5000	5400	399	400	0	NM:i:1	ms:i:395	AS:i:395	nn:i:0	tp:A:S	cm:i:35	s1:i:364	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr1	12000	5000	5400	400	400	12	NM:i:0	ms:i:400	AS:i:400	nn:i:0	tp:A:P	cm:i:37	s1:i:373	s2:i:364	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr2	12000	5000	5400	399	400	0	NM:i:1	ms:i:395	AS:i:395	nn:i:0	tp:A:S	cm:i:35	s1:i:364	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr3	12000	5000	5400	399	400	0	NM:i:1	ms:i:395	AS:i:395	nn:i:0	tp:A:S	cm:i:35	s1:i:354	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr1	12000	5000	5400	400	400	11	NM:i:0	ms:i:400	AS:i:400	nn:i:0	tp:A:P	cm:i:37	s1:i:373	s2:i:364	de:f:0	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr2	12000	5000	5400	399	400	0	NM:i:1	ms:i:395	AS:i:395	nn:i:0	tp:A:S	cm:i:35	s1:i:364	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr4	12000	5000	5400	399	400	0	NM:i:1	ms:i:395	AS:i:395	nn:i:0	tp:A:S	cm:i:35	s1:i:349	de:f:0.0025	rl:i:0	cg:Z:400M
+w	400	0	400	+	chr3	12000	5000	5400	399	400	0	NM:i:1	ms:i:395	AS:i:395	nn:i:0	tp:A:S	cm:i:35	s1:i:354	de:f:0.0025	rl:i:0	cg:Z:400M

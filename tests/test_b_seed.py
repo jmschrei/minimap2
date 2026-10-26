@@ -161,3 +161,70 @@ def test_alt_read_api(tmp_path, synth):
 	targets become ALT and are counted; unknown names are ignored; a missing file returns < 0."""
 	alt = H.write_text(str(tmp_path / "alt.txt"), "chr2\textra column\nno-such-contig\nshort1\n")
 	H.assert_c_case("drv_b_seed", "alt_read", synth.fasta, alt, 2, "chr2", "short1")
+
+
+@pytest.fixture(scope="module")
+def many(tmp_path_factory):
+	"""helpers_b.many_copy_genome() (a 120-copy family at 2% divergence), its brute-force minimizer index
+	and four queries: a copy with 600 unique bases on each side."""
+	d = tmp_path_factory.mktemp("b_many")
+	g, copies = B.many_copy_genome()
+	idx = B.MinimizerIndex(g, 10, 15)
+	queries = []
+	for i, (c, s, e, _) in enumerate(copies[::30]):
+		queries.append(("m%d" % i, g[c][s - 600:e + 600], c, s - 600))
+	assert len(queries) == 4
+	return g, idx, g.write_fasta(str(d / "many.fa")), H.write_fasta(str(d / "mq.fa"), [(n, q) for n, q, _, _ in queries]), queries, str(d)
+
+
+@pytest.mark.parametrize("args,thres", [(["-f", "0.0002"], None), (["-f", "0.002"], None), (["-f", "50"], 50), (["-f", "85"], 85),
+	(["-U", "88,1000000", "-f", "0.002"], 88), (["-U", "10,70", "-f", "0.0002"], 70)])
+def test_many_copy_occurrence_thresholds(many, args, thres):
+	"""High-occurrence seeds: on a genome whose 120-copy family has minimizers occurring up to 96 times,
+	-f FLOAT (the brute-force count at rank floor((1-FLOAT)n), plus one), -f INT and -U set a threshold
+	inside the family's counts; with -e 0 each query's rl:i is the union of the k-mers of its minimizers
+	occurring more often (minimap2.1: -f, -U), and the copy plus its unique flanks still maps at its place."""
+	g, idx, fa, qfa, queries, _ = many
+	if thres is None:
+		thres = max(10, idx.mid_occ(float(args[1])))
+	fam = [len(v) for v in idx.occ.values() if len(v) > 20]
+	assert min(fam) <= thres < max(fam)  # the threshold splits the family's minimizers
+	paf = H.map_reads(fa, qfa, args + ["-e", "0"]).paf()
+	prim = dict((p.qname, p) for p in paf if p.is_primary)
+	n_rep = 0
+	for name, q, c, s in queries:
+		p = prim[name]
+		assert p.tname == c and p.strand == "+" and abs(p.tstart - p.qstart - s) <= 10, p.line
+		assert p.tags["rl"] == B.repeat_len(q, idx, thres), (args, name, p.tags["rl"])
+		n_rep += p.tags["rl"] > 0
+	assert n_rep >= 2
+
+
+@pytest.mark.parametrize("max_occ,max_max_occ,dist", [(80, 4095, 0), (60, 4095, 50), (85, 90, 30), (40, 4095, 500)])
+def test_collect_matches_many_copies(many, max_occ, max_max_occ, dist):
+	"""mm_collect_matches with high-occurrence minimizers (counts up to 96): anchors, kept minimizers and
+	(without sampling) the repetitive length equal the brute-force values; with -e sampling the least
+	frequent repetitive minimizers of each run are kept, one per dist bases, unless above max_max_occ."""
+	g, idx, fa, _, queries, d = many
+	for name, q, _, _ in queries:
+		path = H.write_fasta(str(d) + "/%s.fa" % name, [(name, q)])
+		n_a, n_kept, rep = B.collect_expectation(q, idx, max_occ, max_max_occ, dist)
+		H.assert_c_case("drv_b_seed", "collect", fa, 10, 15, path, max_occ, max_max_occ, dist, n_a, n_kept, -1 if rep is None else rep)
+
+
+@pytest.mark.pinned
+def test_sampled_minimizers_pinned(cn, tmp_path):
+	"""Pins the current output: which high-occurrence minimizers -e sampling keeps when several are
+	equally frequent (mm_seed_select; minimap2.1 says only "sample a high-frequency minimizer every INT
+	basepairs"). On the queries spanning the 3-, 6- and 12-copy exact repeats every minimizer of a family
+	occurs equally often, so the sample is decided by the tie-break; the query positions of the kept
+	minimizers are pinned for four threshold and spacing settings, after the counts are checked against
+	brute force as in test_collect_matches_against_brute_force."""
+	out = []
+	for path, q, _, _ in cn.queries:
+		for max_occ, max_max_occ, dist in ((2, 4095, 500), (2, 4095, 100), (2, 8, 100), (5, 4095, 50)):
+			n_a, n_kept, _ = B.collect_expectation(q, cn.index, max_occ, max_max_occ, dist)
+			pos = str(tmp_path / "pos.txt")
+			H.assert_c_case("drv_b_seed", "collect", cn.fasta, 10, 15, path, max_occ, max_max_occ, dist, n_a, n_kept, -1, pos)
+			out.append("# %s %d %d %d\n" % (os.path.basename(path), max_occ, max_max_occ, dist) + H.read_text(pos))
+	H.check_pinned("b/sampled-minimizers.txt.gz", "".join(out))

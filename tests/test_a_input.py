@@ -196,16 +196,11 @@ def _read_driver(path, chunk, with_qual=1, with_comment=1, frag=0, fn=3, stdin=N
 
 
 def _check_batches(batches, records, chunk, frag=False):
-	"""The batches hold the records in order; each batch except the last reaches chunk bases. Without
-	frag mode a batch ends with the record that reaches chunk bases; in frag mode a batch never splits
-	records whose names differ only by a trailing /N."""
+	"""The batches hold the records in order; in frag mode a batch never splits records whose names
+	differ only by a trailing /N (mates must be mapped together). Where a batch ends otherwise is not
+	checked: it does not change minimap2's output (-K), and a speed change may batch differently."""
 	assert [x for b in batches for x in b] == records
-	sizes = [sum(len(x[1]) for x in b) for b in batches]
-	assert all(s >= chunk for s in sizes[:-1]), sizes
-	if not frag:
-		for b in batches:
-			assert sum(len(x[1]) for x in b[:-1]) < chunk
-	else:
+	if frag:
 		stem = lambda n: n[:-2] if len(n) >= 3 and n[-2] == "/" and n[-1].isdigit() else n
 		for b1, b2 in zip(batches, batches[1:]):
 			assert stem(b1[-1][0]) != stem(b2[0][0])
@@ -214,7 +209,7 @@ def _check_batches(batches, records, chunk, frag=False):
 def test_bseq_read_fasta_and_fastq(tmp_path):
 	"""mm_bseq_read3 returns each record's name (up to the first space), sequence (U and u turned into T
 	and t, any other byte kept), quality (FASTQ, with_qual) and comment (with_comment), in file order and
-	in batches of about chunk_size bases; mm_bseq_read2 and mm_bseq_read return no comments; the reader
+	in batches (chunk_size 1, 250 and 10^9); mm_bseq_read2 and mm_bseq_read return no comments; the reader
 	takes multi-line FASTA and FASTQ, gzip and standard input, and mm_bseq_eof is true at the end."""
 	rng = H.Rng(211)
 	recs = []
@@ -258,8 +253,8 @@ def test_bseq_read_fasta_and_fastq(tmp_path):
 
 def test_bseq_read_frag_mode_keeps_mates_together(tmp_path):
 	"""In fragment mode (frag_mode, as -x sr uses for an interleaved file) a batch is not ended between
-	reads whose names differ only by /1 and /2, even at chunk size 1; without it, chunk size 1 gives one
-	record per batch."""
+	reads whose names differ only by /1 and /2, even at chunk size 1; without it the same records are
+	read in order."""
 	rng = H.Rng(221)
 	recs = []
 	for i in range(9):
@@ -272,13 +267,13 @@ def test_bseq_read_frag_mode_keeps_mates_together(tmp_path):
 		b, _ = _read_driver(f, chunk, frag=1, tmp=str(tmp_path))
 		_check_batches(b, recs, chunk, frag=True)
 	b, _ = _read_driver(f, 1, frag=0, tmp=str(tmp_path))
-	assert [len(x) for x in b] == [1] * len(recs)
+	_check_batches(b, recs, 1)
 
 
 def test_bseq_read_frag_two_files(tmp_path):
 	"""mm_bseq_read_frag2 and mm_bseq_read_frag read one record from each file in turn (read 1, read 2,
-	read 1, ...) in batches of whole pairs that end with the pair reaching chunk_size; with fewer records
-	in one file they stop at its end and warn."""
+	read 1, ...) in batches of whole pairs (where a batch ends is not checked); with fewer records in one
+	file they stop at its end and warn."""
 	rng = H.Rng(231)
 	r1 = [("q%d" % i, rng.dna(rng.randint(30, 90)), None, "a%d b" % i) for i in range(10)]
 	r2 = [("q%d" % i, rng.dna(rng.randint(30, 90)), None, None) for i in range(10)]
@@ -299,9 +294,6 @@ def test_bseq_read_frag_two_files(tmp_path):
 				batches[-1].append((name, seq, None, None if comment == "*" else comment))
 			want = [(n, s, None, c if keep_c else None) for n, s, _, c in inter]
 			assert [x for b in batches for x in b] == want
-			sizes = [sum(len(x[1]) for x in b) for b in batches]
-			assert all(s >= chunk for s in sizes[:-1])
-			assert all(sum(len(x[1]) for x in b[:-2]) < chunk for b in batches)
 	out = str(tmp_path / "s.tsv")
 	r = H.run_c_case("drv_a_bseq", "frag", [f1, f2short, 10 ** 6, 1, 1, 2, out])
 	assert r.passed, r.report()

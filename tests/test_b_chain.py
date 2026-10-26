@@ -245,3 +245,18 @@ def test_bandwidth_r_and_long_join(clean, tmp_path):
 	assert sorted((p.qstart, p.qend, p.tstart, p.tend, p.cigar) for p in pc) == [(0, 2000, 20000, 22000, "2000M"),
 		(2000, 4000, 22600, 24600, "2000M")]
 	assert H.paf_invariant_errors(pc, clean.genome, {"del": seq}) == []
+
+
+@pytest.mark.pinned
+def test_chaining_heuristics_pinned(tmp_path):
+	"""Pins the current output of mg_lchain_dp and mg_lchain_rmq with their heuristics on, on 150 random
+	anchor sets (two contigs, both strands, collinear runs with indels and scattered decoys): DP with the
+	defaults, --max-chain-skip 0, --max-chain-iter 1, and --max-chain-iter 3 with --max-chain-skip 2; RMQ
+	with --rmq-inner 1000, 40 and 0. Which chains these heuristics form is documented only as
+	"heuristics" (test_random_anchor_sets_against_brute_force checks that they never beat the optimum),
+	so each result is pinned as one line per set and setting: the number of chains, the best score and a
+	hash of every chain's score, count and anchors, independent of the order of the chains. Every chain
+	is also checked to be collinear on one contig and strand."""
+	out = str(tmp_path / "heuristics.tsv")
+	H.assert_c_case("drv_b_chain", "heuristics", 11, 150, out)
+	H.check_pinned("b/chain-heuristics.tsv.gz", H.read_text(out))
