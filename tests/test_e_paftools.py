@@ -91,7 +91,9 @@ def test_view_blast_like(k8, tmp_path):
 	rev = list(VIEW_PAF)
 	rev[0], rev[4] = "q2", "-"
 	nocs = ["q3", 20, 0, 10, "+", "t1", 30, 0, 10, 10, 10, 60, "tp:A:P", "cg:Z:10M"]
-	p = _w(tmp_path, "v.paf", [fwd, nocs, rev])
+	# multi-base gaps: ei and ed count bases, oi and od events
+	gaps = ["q4", 20, 0, 10, "+", "t1", 30, 0, 11, 8, 13, 60, "tp:A:P", "cs:Z::3+gg:2-tta:3"]
+	p = _w(tmp_path, "v.paf", [fwd, nocs, rev, gaps])
 	out = _pt("view", p).stdout.splitlines()
 	ref, mid, qry = "=====a-====t=====", "|||||  |||| |||||", "=====gc====-====="
 	head = "\tq1\t20\t2\t18\t+\tt1\t30\t5\t21\t14\t17\t60\ttp:A:P\tAS:i:9"
@@ -99,18 +101,28 @@ def test_view_blast_like(k8, tmp_path):
 	want = [">" + head[1:] + tail] + _blast_block(5, 2, "+", [0, 0], [16, 16], ref, mid, qry) + ["//"]
 	want += [">" + head[1:].replace("q1", "q2").replace("\t+\t", "\t-\t") + tail]
 	want += _blast_block(5, 18, "-", [0, 0], [16, 16], ref, mid, qry) + ["//"]
+	want += [">q4\t20\t0\t10\t+\tt1\t30\t0\t11\t8\t13\t60\ttp:A:P\tmm:i:0\toi:i:1\tei:i:2\tod:i:1\ted:i:3"]
+	want += _blast_block(0, 0, "+", [0, 0], [11, 10], "===--==tta===", "|||  ||   |||", "===gg==---===") + ["//"]
 	assert out == want
-	assert want[2] == "Ref+:          6 =====a-====t===== 21        "
+	assert want[1] == "Ref+:          6 =====a-====t===== 21        "
+	assert want[8] == "Qry-:         18 =====gc====-===== 3         "
 
 
 def test_view_line_length(k8, tmp_path):
 	"""view -l 10 wraps the alignment every 10 columns; blocks are separated by an empty line and each block
-	carries the positions of its own first and last base."""
+	carries the positions of its own first and last base. With -l 5 the first run of matches fills a line
+	exactly, so the mismatch after it starts the next line."""
 	p = _w(tmp_path, "v.paf", [VIEW_PAF])
 	out = _pt("view", "-l", "10", p).stdout.splitlines()
 	want = [out[0]]
 	want += _blast_block(5, 2, "+", [0, 0], [9, 10], "=====a-===", "|||||  |||", "=====gc===")
 	want += [""] + _blast_block(5, 2, "+", [9, 10], [16, 16], "=t=====", "| |||||", "=-=====") + ["//"]
+	assert out == want
+	out = _pt("view", "-l", "5", p).stdout.splitlines()
+	want = [out[0]] + _blast_block(5, 2, "+", [0, 0], [5, 5], "=====", "|||||", "=====")
+	want += [""] + _blast_block(5, 2, "+", [5, 5], [9, 10], "a-===", "  |||", "gc===")
+	want += [""] + _blast_block(5, 2, "+", [9, 10], [14, 14], "=t===", "| |||", "=-===")
+	want += [""] + _blast_block(5, 2, "+", [14, 14], [16, 16], "==", "||", "==") + ["//"]
 	assert out == want
 
 
@@ -184,13 +196,14 @@ def test_delta2paf(k8, tmp_path):
 	"""delta2paf turns MUMmer delta records into PAF: 1-based inclusive coordinates become 0-based half-open,
 	decreasing query coordinates mean the reverse strand, each positive delta d is d-1 matches then a
 	deletion, each negative one |d|-1 matches then an insertion, and column 10 is the block length minus
-	the error count (also NM:i)."""
+	the error count (also NM:i). A run of 1s after a delta extends the same gap (here 3M2D7M)."""
 	p = _w(tmp_path, "in.delta", ["/r.fa /q.fa", "NUCMER", ">t1 q1 1000 800", "101 200 51 150 2 2 0", "5", "-10", "0",
-		"201 300 400 301 0 0 0", "0", ">t2 q2 500 400", "11 20 1 10 1 1 0", "0"])
+		"201 300 400 301 0 0 0", "0", ">t2 q2 500 400", "11 20 1 10 1 1 0", "0", "31 42 21 30 2 2 0", "4", "1", "0"])
 	assert _tsv(_pt("delta2paf", p).stdout) == [
 		["q1", "800", "50", "150", "+", "t1", "1000", "100", "200", "99", "101", "0", "NM:i:2", "cg:Z:4M1D9M1I86M"],
 		["q1", "800", "300", "400", "-", "t1", "1000", "200", "300", "100", "100", "0", "NM:i:0", "cg:Z:100M"],
-		["q2", "400", "0", "10", "+", "t2", "500", "10", "20", "9", "10", "0", "NM:i:1", "cg:Z:10M"]]
+		["q2", "400", "0", "10", "+", "t2", "500", "10", "20", "9", "10", "0", "NM:i:1", "cg:Z:10M"],
+		["q2", "400", "20", "30", "+", "t2", "500", "30", "42", "10", "12", "0", "NM:i:2", "cg:Z:3M2D7M"]]
 	r = _pt("delta2paf", check=False)
 	assert r.returncode == 1 and r.stdout.startswith("Usage: paftools.js delta2paf")
 
@@ -301,6 +314,16 @@ def test_paf2gff(k8, tmp_path):
 		["chr2", "paf2gff", "start_codon", "101", "103", "0", "+", ".", a2 + ";frameshift=0"],
 		["chr2", "paf2gff", "CDS", "101", "400", "0", "+", "0", a2 + ";frameshift=0"],
 		["chr2", "paf2gff", "stop_codon", "401", "403", "0", "+", ".", a2 + ";frameshift=0"]]
+	# on the reverse strand the stop codon lies before the alignment on the reference and the start codon at its end
+	rev = _w(tmp_path, "r.paf", [["q3", 100, 0, 100, "-", "chr2", 5000, 100, 400, 95, 100, 0, "AS:i:300", "np:i:98",
+		"da:i:0", "do:i:0", "cg:Z:100M"]])
+	a3 = "transcript_id=q3#1;transcript_type=protein_coding"
+	assert _tsv(_pt("paf2gff", "-a", rev).stdout) == [
+		["chr2", "paf2gff", "transcript", "98", "400", "300", "-", ".", a3 + ";identity=0.9500;positive=2.9400;aa_start=0;"
+			"aa_end=0;dist_start_codon=0;dist_stop_codon=0"],
+		["chr2", "paf2gff", "stop_codon", "98", "100", "0", "-", ".", a3 + ";frameshift=0"],
+		["chr2", "paf2gff", "CDS", "101", "400", "0", "-", "0", a3 + ";frameshift=0"],
+		["chr2", "paf2gff", "start_codon", "398", "400", "0", "-", ".", a3 + ";frameshift=0"]]
 	assert _pt("paf2gff", _w(tmp_path, "noas.paf", [nt[:12] + [nt[13]]]), check=False).returncode != 0
 
 
@@ -338,17 +361,28 @@ def test_stat_paf(k8, tmp_path):
 		["q2", "100", "+", "t1", "5600", "D", "1500"]]
 	assert _tsv(_pt("stat", "-c", p).stdout) == [["q1", "1000", "60", "0", "20", "1005", "7", "992"],
 		["q2", "2000", "60", "200", "65", "1800", "6", "1741"], ["q2", "2000", "60", "1800", "1500", "1700", "1", "201"]]
+	# gaps on both sides of every bin boundary; -l 400 lists the gaps of 400 bp and longer
+	gaps = [49, "I", 99, "D", 50, "I", 100, "D", 300, "I", 399, "D", 999, "I", 400, "D", 1000, "D"]
+	cg = "100M" + "".join("%d%s100M" % (gaps[i], gaps[i + 1]) for i in range(0, len(gaps), 2))
+	b = _w(tmp_path, "b.paf", [["q9", 2398, 0, 2398, "+", "t9", 5000, 0, 2998, 1000, 4396, 60, "tp:A:P", "NM:i:3396",
+		"s1:i:900", "s2:i:0", "cg:Z:" + cg]])
+	assert _pt("stat", b).stdout.splitlines() == _stat_lines(1, 1, 0, 2398, 2398, 0, [1, 1, 0, 1, 1, 0], [0, 1, 1, 1, 1, 1])
+	assert _tsv(_pt("stat", "-l", "400", b).stdout) == [["q9", "2098", "+", "t9", "1298", "I", "999"],
+		["q9", "2198", "+", "t9", "1798", "D", "400"], ["q9", "2298", "+", "t9", "2898", "D", "1000"]]
 
 
 def test_stat_sam(k8, tmp_path):
 	"""stat on SAM: 0x100 records are secondary, the query interval comes from the clips (from the other end on
-	the reverse strand) and the read length from CIGAR plus clips; read from stdin with '-'."""
+	the reverse strand) and the read length from CIGAR plus clips; read from stdin with '-'. r2's primary
+	covers read bases [10,100) (its trailing soft clip is the start of the read) and its supplementary
+	[0,10), so all 100 bases of r2 are mapped."""
 	sam = ["@SQ\tSN:t1\tLN:1000", ["r1", 0, "t1", 1, 60, "5S95M", "*", 0, 0, "A" * 100, "*", "NM:i:2"],
 		["r1", 256, "t1", 501, 0, "95M5S", "*", 0, 0, "*", "*", "NM:i:3"],
 		["r2", 16, "t1", 201, 60, "50M10D40M10S", "*", 0, 0, "C" * 100, "*", "NM:i:13"],
+		["r2", 2048, "t1", 701, 60, "10M90H", "*", 0, 0, "ACGTACGTAC", "*", "NM:i:0"],
 		["r3", 4, "*", 0, 0, "*", "*", 0, 0, "ACGT", "*"]]
 	text = "".join("\t".join(str(x) for x in l) + "\n" if isinstance(l, list) else l + "\n" for l in sam)
-	assert _pt("stat", "-", stdin=text).stdout.splitlines() == _stat_lines(2, 2, 1, 200, 185, 5, [0] * 6, [1, 0, 0, 0, 0, 0])
+	assert _pt("stat", "-", stdin=text).stdout.splitlines() == _stat_lines(2, 3, 1, 200, 195, 5, [0] * 6, [1, 0, 0, 0, 0, 0])
 
 
 def test_asmstat(k8, tmp_path):
@@ -431,17 +465,25 @@ MISJOIN_PAF = [
 	["c4", 100000, 0, 30000, "+", "chrA", 1000000, 700000, 730000, 30000, 30000, 60],
 	["c4", 100000, 30000, 60000, "-", "chrA", 1000000, 730000, 760000, 30000, 30000, 60],
 	["c5", 100000, 0, 90000, "+", "chrA", 1000000, 800000, 890000, 90000, 90000, 60],
+	# reverse strand without a gap: the second query block lies just before the first on the reference
+	["c6", 100000, 0, 30000, "-", "chrA", 1000000, 930000, 960000, 30000, 30000, 60],
+	["c6", 100000, 30000, 60000, "-", "chrA", 1000000, 900000, 930000, 30000, 30000, 60],
+	# forward then two contiguous reverse blocks: an inversion that runs to the contig end
+	["c7", 100000, 0, 30000, "+", "chrA", 1000000, 600000, 630000, 30000, 30000, 60],
+	["c7", 100000, 30000, 60000, "-", "chrA", 1000000, 660000, 690000, 30000, 30000, 60],
+	["c7", 100000, 60000, 90000, "-", "chrA", 1000000, 630000, 660000, 30000, 30000, 60],
 ]
 
 
 def test_misjoin(k8, tmp_path):
 	"""misjoin, with blocks of at least -l (here 1k) and gaps above -g (1k): consecutive blocks of a contig on
-	different chromosomes are an inter-chromosomal misjoin, on the same strand far apart a gap, a
-	reversed block between two forward ones a closed inversion, a reversed last block an inversion at the
-	contig end. The second number counts those touching -c centromeres; -e prints the misjoins."""
+	different chromosomes are an inter-chromosomal misjoin, on the same strand far apart a gap (on the
+	reverse strand the reference runs backwards, so c6 has none), a reversed block between two forward ones
+	a closed inversion, a reversed run that reaches the last block (c4, c7) an inversion at the contig end.
+	The second number counts those touching -c centromeres; -e prints the misjoins."""
 	p = _w(tmp_path, "m.paf", MISJOIN_PAF)
 	assert _pt("misjoin", "-l", "1k", "-g", "1k", p).stdout.splitlines() == ["# inter-chromosomal misjoins: 1,0",
-		"# intra-chromosomal gaps: 1,0", "# candidate inversions in the middle: 1,0", "# candidate inversions at contig ends: 1,0"]
+		"# intra-chromosomal gaps: 1,0", "# candidate inversions in the middle: 1,0", "# candidate inversions at contig ends: 2,0"]
 	cen = _w(tmp_path, "cen.bed", [["chrB", 195000, 235000]])
 	assert _pt("misjoin", "-l", "1k", "-g", "1k", "-c", cen, p).stdout.splitlines()[0] == "# inter-chromosomal misjoins: 1,1"
 	assert _pt("misjoin", p).stdout.splitlines() == ["# inter-chromosomal misjoins: 0,0", "# intra-chromosomal gaps: 0,0",
@@ -458,17 +500,18 @@ def test_bedcov(k8, tmp_path):
 	percentage; -e drops targets overlapping its BED."""
 	reg = _w(tmp_path, "reg.bed", [["chr1", 100, 200], ["chr1", 150, 300], ["chr1", 500, 600], ["chr2", 0, 50]])
 	tgt = _w(tmp_path, "tgt.bed", [["chr1", 0, 1000], ["chr1", 250, 550], ["chr2", 10, 20], ["chr3", 0, 100],
-		["chr1", 50, 650, "tx", 0, "+", 50, 650, 0, 2, "100,100,", "0,500,"]])
+		["chr1", 50, 650, "tx", 0, "+", 50, 650, 0, 2, "100,100,", "0,450,"]])
+	# tx blocks [50,150) and [500,600): 50 + 100 bases covered by the merged regions [100,300) and [500,600)
 	r = _pt("bedcov", "-p", reg, tgt)
 	assert _tsv(r.stdout) == [["F", "chr1", "0", "1000", "1000", "300"], ["F", "chr1", "250", "550", "300", "100"],
-		["F", "chr2", "10", "20", "10", "10"], ["F", "chr1", "50", "650", "tx", "200", "100"]]
-	assert "# target bases: 1610" in r.stderr and "# target bases overlapping regions: 510 (31.68%)" in r.stderr
+		["F", "chr2", "10", "20", "10", "10"], ["F", "chr1", "50", "650", "tx", "200", "150"]]
+	assert "# target bases: 1610" in r.stderr and "# target bases overlapping regions: 560 (34.78%)" in r.stderr
 	r = _pt("bedcov", reg, tgt)
-	assert r.stdout == "" and "510 (31.68%)" in r.stderr
+	assert r.stdout == "" and "560 (34.78%)" in r.stderr
 	excl = _w(tmp_path, "excl.bed", [["chr1", 900, 950]])
 	r = _pt("bedcov", "-p", "-e", excl, reg, tgt)
 	assert _tsv(r.stdout)[0] == ["F", "chr1", "0", "1000", "0", "0"]
-	assert "# target bases: 610" in r.stderr and "210 (34.43%)" in r.stderr
+	assert "# target bases: 610" in r.stderr and "260 (42.62%)" in r.stderr
 
 
 VCF_HEAD = ["##fileformat=VCFv4.2", "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1"]
@@ -497,6 +540,7 @@ LIFT_PAF = [
 	["q1", 1000, 100, 900, "+", "t1", 5000, 3000, 3800, 790, 800, 60, "tp:A:S", "cg:Z:800M"],
 	["q2", 1000, 100, 900, "-", "t1", 5000, 3000, 3800, 800, 800, 60, "tp:A:P", "cg:Z:800M"],
 	["q3", 1000, 0, 1000, "+", "t2", 5000, 0, 1000, 1000, 1000, 3, "tp:A:P", "cg:Z:1000M"],
+	["q4", 1000, 0, 1000, "+", "t3", 5000, 0, 990, 990, 1000, 60, "tp:A:P", "cg:Z:500M10I490M"],
 ]
 
 
@@ -505,30 +549,38 @@ def test_liftover(k8, tmp_path, cmd):
 	"""liftover maps query-coordinate BED intervals through primary alignments of at least -l bp (default 50
 	kbp) and mapQ -q (5): bases inside the alignment move with the CIGAR (deletions shift later bases), a
 	reverse-strand alignment flips the interval, an end outside the alignment is clipped to it and marked
-	_t5/_t3; -d drops alignments above that gap-compressed divergence. liftOver is the same command."""
+	_t5/_t3, a base inside an insertion maps to the insertion point; -d drops alignments above that
+	gap-compressed divergence (mismatches plus gap opens over that plus matches: 11/801 for q1, 1/991 for
+	q4). liftOver is the same command."""
 	paf = _w(tmp_path, "l.paf", LIFT_PAF)
-	bed = _w(tmp_path, "q.bed", [["q1", 50, 150], ["q1", 200, 250], ["q1", 450, 460], ["q2", 200, 250], ["q3", 10, 20]])
+	bed = _w(tmp_path, "q.bed", [["q1", 50, 150], ["q1", 200, 250], ["q1", 450, 460], ["q2", 200, 250], ["q3", 10, 20],
+		["q4", 495, 505]])
 	assert _pt(cmd, paf, bed).stdout == ""
 	want = [["t1", "1000", "1050", "q1_50_150_t5", "0", "+"], ["t1", "1100", "1150", "q1_200_250", "0", "+"],
 		["t1", "1352", "1362", "q1_450_460", "0", "+"], ["t1", "3650", "3700", "q2_200_250", "0", "-"]]
-	assert _tsv(_pt(cmd, "-l", "500", paf, bed).stdout) == want
-	assert _tsv(_pt(cmd, "-l", "500", "-q", "2", paf, bed).stdout) == want + [["t2", "10", "20", "q3_10_20", "0", "+"]]
+	q3, q4 = ["t2", "10", "20", "q3_10_20", "0", "+"], ["t3", "495", "501", "q4_495_505", "0", "+"]
+	assert _tsv(_pt(cmd, "-l", "500", paf, bed).stdout) == want + [q4]
+	assert _tsv(_pt(cmd, "-l", "500", "-q", "2", paf, bed).stdout) == want + [q3, q4]
 	assert _tsv(_pt(cmd, "-l", "500", "-d", "0.001", paf, bed).stdout) == want[3:]
-	assert _tsv(_pt(cmd, "-l", "500", "-d", "0.05", "-", bed, stdin=open(paf).read()).stdout) == want
+	assert _tsv(_pt(cmd, "-l", "500", "-d", "0.014", paf, bed).stdout) == want + [q4]
+	assert _tsv(_pt(cmd, "-l", "500", "-d", "0.0137", paf, bed).stdout) == want[3:] + [q4]
+	assert _tsv(_pt(cmd, "-l", "500", "-d", "0.05", "-", bed, stdin=open(paf).read()).stdout) == want + [q4]
 
 
 CALL_PAF = [
 	["qA", 20001, 0, 20001, "+", "chr1", 100000, 1000, 21000, 19996, 20002, 60, "tp:A:P", "cs:Z::100*ag:100+tt:100-c:19698"],
 	["qB", 25000, 0, 25000, "+", "chr1", 100000, 15000, 40000, 24998, 25000, 60, "tp:A:P", "cs:Z::1000*ct:13999*ga:9999"],
-	["qC", 1000, 0, 1000, "-", "chr2", 50000, 5000, 6000, 999, 1000, 60, "tp:A:P", "cs:Z::10*ac:989"],
+	["qC", 1000, 0, 1000, "-", "chr2", 50000, 5000, 6000, 996, 1002, 60, "tp:A:P", "cs:Z::10*ac:100*tc:100+ga:100-tt:686"],
 ]
 
 
 def test_call(k8, tmp_path):
 	"""call on coordinate-sorted asm-to-ref PAF with cs (misc/README.md): R lines give regions covered by
 	exactly one contig, V lines give each variant as chr, start, end, depth, mapQ, REF, ALT, query, query
-	start, end, strand; depth counts the alignments over the variant. The summary on stderr counts
-	depth-1 variants."""
+	start, end, strand (query positions on the forward query, so they count down along a reverse-strand
+	contig); depth counts the alignments over the variant. The summary on stderr counts depth-1 variants.
+	Alignments of at least -l count toward depth and the single-coverage regions; only those of at least
+	-L give variants and R lines."""
 	p = _w(tmp_path, "c.paf", CALL_PAF)
 	r = _pt("call", "-l", "1000", "-L", "1000", p)
 	assert _tsv(r.stdout) == [
@@ -540,11 +592,21 @@ def test_call(k8, tmp_path):
 		["V", "chr1", "16000", "16001", "2", "60", "c", "t", "qB", "1000", "1001", "+"],
 		["V", "chr1", "30000", "30001", "1", "60", "g", "a", "qB", "15000", "15001", "+"],
 		["R", "chr2", "5000", "6000"],
-		["V", "chr2", "5010", "5011", "1", "60", "a", "c", "qC", "989", "990", "-"]]
+		["V", "chr2", "5010", "5011", "1", "60", "a", "c", "qC", "989", "990", "-"],
+		["V", "chr2", "5111", "5112", "1", "60", "t", "c", "qC", "888", "889", "-"],
+		["V", "chr2", "5212", "5212", "1", "60", "-", "ga", "qC", "786", "788", "-"],
+		["V", "chr2", "5312", "5314", "1", "60", "tt", "-", "qC", "686", "686", "-"]]
 	err = r.stderr.splitlines()
 	assert "34000 reference bases covered by exactly one contig" in err
-	assert "3 substitutions; ts/tv = 2.000" in err and "1 1bp deletions" in err and "1 2bp insertions" in err
+	assert "4 substitutions; ts/tv = 3.000" in err and "1 1bp deletions" in err and "2 2bp insertions" in err
+	assert "1 2bp deletions" in err and "0 1bp insertions" in err
 	assert _pt("call", p).stdout == ""  # default -L 50000 / -l 10000: every alignment is too short
+	# -L 20500: qA (20002 columns) and qC still count toward depth and coverage but give no variants or R lines
+	r = _pt("call", "-l", "1000", "-L", "20500", p)
+	assert _tsv(r.stdout) == [["R", "chr1", "21000", "40000"],
+		["V", "chr1", "16000", "16001", "2", "60", "c", "t", "qB", "1000", "1001", "+"],
+		["V", "chr1", "30000", "30001", "1", "60", "g", "a", "qB", "15000", "15001", "+"]]
+	assert "19000 reference bases covered by exactly one contig" in r.stderr.splitlines()
 
 
 def test_call_vcf(k8, tmp_path):
@@ -616,25 +678,28 @@ SV_BASE = [["chr1", 1000, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-100;
 	["chr1", 20000, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-300;END=20300"],
 	["chr1", 30000, ".", "A", "<INV>", 30, "PASS", "SVTYPE=INV;END=31000"],
 	["chr1", 40000, ".", "A", "<DEL>", 30, "LowQual", "SVTYPE=DEL;SVLEN=-500"],
-	["chr1", 50000, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-40"]]
+	["chr1", 50000, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-40"],
+	["chr1", 70000, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-1000;END=71000"]]
 SV_CALL = [["chr1", 1050, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-110;END=1160"],
 	["chr1", 5100, ".", "A", "A" + "G" * 150, 30, "PASS", "."],
-	["chr1", 60000, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-80;END=60080"]]
+	["chr1", 60000, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-80;END=60080"],
+	["chr1", 71700, ".", "A", "<DEL>", 30, "PASS", "SVTYPE=DEL;SVLEN=-1000;END=72700"]]
 
 
 def test_sveval(k8, tmp_path):
 	"""sveval compares PASS SVs of at least -i (50) bp: a base SV is found when a call of the same type lies
 	within the window (500 bp plus half its length) and its length differs by less than 50 bp or by less
 	than half; SN = found/base, PC = matched calls/calls, F1 their mean. Inversions, breakends and filtered
-	records are ignored; -e lists the false negatives and positives."""
+	records are ignored; -e lists the false negatives and positives. The 1 kbp deletions at 70000 and
+	71700 are 700 bp apart, inside the 500 + 500 bp window."""
 	base = _w(tmp_path, "base.vcf", VCF_HEAD[:1] + ["#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"] + SV_BASE)
 	call = _w(tmp_path, "call.vcf", VCF_HEAD[:1] + ["#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"] + SV_CALL)
-	assert _tsv(_pt("sveval", base, call).stdout) == [["SN", "3", "2", "0.666667"], ["PC", "3", "2", "0.666667"],
-		["F1", "0.666667"]]
+	assert _tsv(_pt("sveval", base, call).stdout) == [["SN", "4", "3", "0.750000"], ["PC", "4", "3", "0.750000"],
+		["F1", "0.750000"]]
 	out = _tsv(_pt("sveval", "-e", base, call).stdout)
 	assert out[:2] == [["FN", "chr1", "19999", "20300", "-300"], ["FP", "chr1", "59999", "60080", "-80"]]
-	assert _tsv(_pt("sveval", "-i", "120", base, call).stdout) == [["SN", "2", "1", "0.500000"], ["PC", "1", "1", "1.000000"],
-		["F1", "0.750000"]]
+	assert _tsv(_pt("sveval", "-i", "120", base, call).stdout) == [["SN", "3", "2", "0.666667"], ["PC", "2", "2", "1.000000"],
+		["F1", "0.833333"]]
 
 
 def test_vcfsel(k8, tmp_path):
@@ -686,7 +751,8 @@ def test_mapeval_paf(k8, tmp_path):
 def test_mapeval_sam_pairs_and_modes(k8, tmp_path):
 	"""mapeval on SAM with mason2fq pair names (name!chr!s1_s2!e1_e2!strands/N, mate from the flag): each mate
 	is checked against its own interval, unmapped records give the U line. -m 0 judges a read by its longest
-	alignment (matched bases), -m 1 by its first."""
+	alignment (matched bases), -m 1 by its first, -m 2 by all its primary alignments: wrong at the highest
+	mapQ of its wrong ones if any is wrong (S1_8: mapQ 0), otherwise correct at its highest mapQ."""
 	sam = ["@SQ\tSN:chr1\tLN:100000",
 		["p1!chr1!100_400!200_500!+-", 99, "chr1", 101, 60, "100M", "=", 401, 400, "A" * 100, "*"],
 		["p1!chr1!100_400!200_500!+-", 147, "chr1", 401, 60, "100M", "=", 101, -400, "A" * 100, "*"],
@@ -698,6 +764,12 @@ def test_mapeval_sam_pairs_and_modes(k8, tmp_path):
 		5, "tp:A:P", "s1:i:800", "s2:i:0"]])
 	assert _tsv(_pt("mapeval", "-m", "0", two).stdout) == [["Q", "5", "1", "0", "0.000000000", "1"]]
 	assert _tsv(_pt("mapeval", "-m", "1", two).stdout) == [["Q", "60", "1", "1", "1.000000000", "1"]]
+	three = _w(tmp_path, "three.paf", [open(two).read().rstrip("\n"),
+		["S1_8!chr1!3000!4000!+", 1000, 0, 1000, "+", "chr1", 100000, 3000, 4000, 1000, 1000, 20, "tp:A:P", "s1:i:900", "s2:i:0"],
+		["S1_8!chr1!3000!4000!+", 1000, 0, 1000, "+", "chr1", 100000, 80000, 81000, 990, 1000, 0, "tp:A:P", "s1:i:890",
+			"s2:i:0"]])
+	assert _tsv(_pt("mapeval", "-m", "2", three).stdout) == [["Q", "60", "1", "1", "1.000000000", "1"],
+		["Q", "0", "1", "1", "1.000000000", "2"]]
 
 
 def test_pafcmp(k8, tmp_path):
@@ -708,16 +780,19 @@ def test_pafcmp(k8, tmp_path):
 		return [q, ql, 0, ql, "+", chrom, 1000000, st, en, ql, ql, mapq, "tp:A:" + tp]
 	base = _w(tmp_path, "base.paf", [l("r1", 10000, "chr1", 1000, 11000, 60), l("r2", 10000, "chr1", 50000, 60000, 60),
 		l("r3", 10000, "chr2", 100, 10100, 60), l("r4", 3000, "chr1", 0, 3000, 60), l("r5", 10000, "chr1", 0, 5000, 60),
-		l("r5", 10000, "chr1", 8000, 13000, 60), l("r6", 10000, "chr3", 0, 10000, 5), l("r6", 10000, "chr4", 0, 10000, 0, "S")])
+		l("r5", 10000, "chr1", 8000, 13000, 60), l("r6", 10000, "chr3", 0, 10000, 5), l("r6", 10000, "chr4", 0, 10000, 0, "S"),
+		l("r8", 10000, "chr1", 100000, 110000, 60)])
+	# r1 overlaps its base mapping by 9000 of 11000 bases (a hit), r8 by 2000 of 18000 (wrong)
 	test = _w(tmp_path, "test.paf", [l("r1", 10000, "chr1", 2000, 12000, 60), l("r2", 10000, "chr1", 500000, 510000, 60),
-		l("r6", 10000, "chr3", 400000, 410000, 60), l("r7", 10000, "chr1", 0, 10000, 60)])
+		l("r6", 10000, "chr3", 400000, 410000, 60), l("r7", 10000, "chr1", 0, 10000, 60),
+		l("r8", 10000, "chr1", 108000, 118000, 60)])
 	out = _tsv(_pt("pafcmp", base, test).stdout)
-	assert out[:2] == [["W", "r2", "chr1", "50000", "60000", "60", "chr1", "500000", "510000", "60"],
-		["M", "r3", "chr2", "100", "10100", "60"]]
-	assert [x[1] for x in out[2:6]] == ["3 base alignments with mapQ>=10", "1 base alignments correctly mapped by test",
-		"1 wrong test alignment", "1 base alignments missing"]
+	assert out[:3] == [["W", "r2", "chr1", "50000", "60000", "60", "chr1", "500000", "510000", "60"],
+		["W", "r8", "chr1", "100000", "110000", "60", "chr1", "108000", "118000", "60"], ["M", "r3", "chr2", "100", "10100", "60"]]
+	assert [x[1] for x in out[3:7]] == ["4 base alignments with mapQ>=10", "1 base alignments correctly mapped by test",
+		"2 wrong test alignment", "1 base alignments missing"]
 	out = _tsv(_pt("pafcmp", "-q", "1", base, test).stdout)
-	assert [x[0] + x[1] for x in out[:3]] == ["Wr2", "Wr6", "Mr3"] and out[3][1] == "4 base alignments with mapQ>=1"
+	assert [x[0] + x[1] for x in out[:4]] == ["Wr2", "Wr6", "Wr8", "Mr3"] and out[4][1] == "5 base alignments with mapQ>=1"
 
 
 JUNC_GTF = [

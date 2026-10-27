@@ -34,7 +34,7 @@ PAF = [
 	_hit("E", 5000, 1000, 5000, "C", 9000, 0, 4000, 3000, 0.001),
 	"F\t3000\t0\t3000\t-\tA\t10000\t0\t3000\t2990\t3000\t60\ttp:A:P\ts1:i:2000\tdv:f:0.0010",
 ]
-LEN = {"A": 10000, "B": 10000, "C": 9000, "D": 9800, "E": 5000}
+LEN = {"A": 10000, "B": 10000, "C": 9000, "D": 9800, "E": 5000, "G": 10000}
 
 
 def _groups(*names):
@@ -79,6 +79,23 @@ def test_max_divergence(k8, paf):
 def test_max_difference(k8, paf):
 	"""-e 400: the A-C hit leaves 500 bases of A unaligned, more than 400, so C is not grouped with A."""
 	assert _run("-e", "400", paf).stdout.splitlines() == _groups(["A", "B"], ["C"], ["D"], ["E"])
+
+
+def test_split_hits_are_chained(k8, tmp_path):
+	"""Several hits between the same two sequences are chained in order of their start on the first one and
+	scored as one: G matches A in two collinear pieces, A[0,4900) and A[5000,10000) (listed out of order),
+	each 0.1% divergent. Together they cover 99% of both, so G joins A's group at the default -c 0.9 (each
+	piece alone covers about half); at -c 0.995 it stays a singleton. Divergence is averaged over the
+	aligned length."""
+	g = [_hit("A", 10000, 5000, 10000, "G", 10000, 5000, 10000, 4000, 0.001),
+		_hit("A", 10000, 0, 4900, "G", 10000, 0, 4900, 3900, 0.001),
+		_hit("G", 10000, 5000, 10000, "A", 10000, 5000, 10000, 4000, 0.001),
+		_hit("G", 10000, 0, 4900, "A", 10000, 0, 4900, 3900, 0.001)]
+	p = tmp_path / "ava.paf"
+	p.write_text("\n".join(PAF + g) + "\n")
+	r = _run(p)
+	assert r.stdout.splitlines() == _groups(["A", "B", "C", "G"], ["D"], ["E"]) and "Read 12 hits" in r.stderr
+	assert _run("-c", "0.995", p).stdout.splitlines() == _groups(["A", "B"], ["C"], ["D"], ["E"], ["G"])
 
 
 def test_usage(k8):
