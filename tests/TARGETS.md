@@ -830,40 +830,40 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 
 | Target | Notes | Tested |
 |:--|:--|:--|
-| `paftools.js view` |  | needs k8: test_e_paftools.py::test_view_blast_like, test_e_paftools.py::test_view_line_length, test_e_paftools.py::test_view_lastz_cigar_and_maf, usage |
-| `paftools.js sam2paf` |  | needs k8: test_e_paftools.py::test_sam2paf (-p -P -U -L, MD->cs, =/X, clips, /1), pilot test_pilot.py::test_paftools_sam2paf_agrees_with_paf_output |
-| `paftools.js delta2paf` |  | needs k8: test_e_paftools.py::test_delta2paf |
-| `paftools.js splice2bed` |  | needs k8: test_e_paftools.py::test_splice2bed (PAF and SAM, -m, colours); `-n` not tested (uses k8 0.x `Map.put`, absent in k8 1.x) |
-| `paftools.js gff2bed` |  | needs k8: test_e_paftools.py::test_gff2bed (GTF, GFF3, -s -j -e -G); `-u`/`-g` not tested |
-| `paftools.js gff2junc` |  | needs k8: test_e_paftools.py::test_gff2junc (-f) |
-| `paftools.js stat` |  | needs k8: test_e_paftools.py::test_stat_paf (-l -c), test_e_paftools.py::test_stat_sam |
-| `paftools.js asmstat` |  | needs k8: test_e_paftools.py::test_asmstat (-l, two assemblies, gzip) |
-| `paftools.js asmgene` |  | needs k8: test_e_paftools.py::test_asmgene (-c -i -e); `-a` not tested |
-| `paftools.js misjoin` |  | needs k8: test_e_paftools.py::test_misjoin (-l -g -c -e) |
-| `paftools.js liftover` |  | needs k8: test_e_paftools.py::test_liftover[liftover] (-l -q -d, stdin, _t5) |
-| `paftools.js liftOver` | alias of liftover | needs k8: test_e_paftools.py::test_liftover[liftOver] |
-| `paftools.js vcfpair` |  | needs k8: test_e_paftools.py::test_vcfpair (-m -g -s) |
-| `paftools.js call` |  | needs k8: test_e_paftools.py::test_call, test_e_paftools.py::test_call_vcf (-l -L -f -s) |
-| `paftools.js mapeval` |  | needs k8: test_e_paftools.py::test_mapeval_paf (-r -Q), test_e_paftools.py::test_mapeval_sam_pairs_and_modes (-m 0/1, U line) |
-| `paftools.js pafcmp` |  | needs k8: test_e_paftools.py::test_pafcmp (-q); the "additional test alignments" count is not asserted (it increments test_e_paftools.py::test_opt.n_out_high, so it always prints 0) |
-| `paftools.js bedcov` |  | needs k8: test_e_paftools.py::test_bedcov (-p -e, BED12); `-d` not tested (calls `Interval.dedup`, which does not exist) |
-| `paftools.js mason2fq` |  | needs k8: test_e_paftools.py::test_mason2fq |
-| `paftools.js sim2bed` |  | needs k8: test_e_paftools.py::test_sim2bed |
-| `paftools.js pbsim2fq` |  | needs k8: test_e_paftools.py::test_pbsim2fq |
-| `paftools.js badread2fa` |  | needs k8: test_e_paftools.py::test_badread2fa |
-| `paftools.js junceval` |  | needs k8: test_e_paftools.py::test_junceval (-l -p -e) |
-| `paftools.js exoneval` |  | needs k8: test_e_paftools.py::test_exoneval (-s) |
-| `paftools.js ov-eval` |  | needs k8: test_e_paftools.py::test_ov_eval (-l, stdin) |
-| `paftools.js vcfstat` |  | needs k8: test_e_paftools.py::test_vcfstat (stdin) |
-| `paftools.js sveval` |  | needs k8: test_e_paftools.py::test_sveval (-e -i) |
-| `paftools.js vcfsel` |  | needs k8: test_e_paftools.py::test_vcfsel (-l -L) |
-| `paftools.js longcs2seq` |  | needs k8: test_e_paftools.py::test_longcs2seq (-q, short cs error) |
-| `paftools.js paf2gff` |  | needs k8: test_e_paftools.py::test_paf2gff (-a, start/stop codons, missing AS) |
-| `paftools.js version` |  | needs k8: test_e_paftools.py::test_version_is_the_minimap2_version |
-| `paftools.js` (no command) | usage, exit 1 | needs k8: test_e_paftools.py::test_no_command_prints_usage_and_exits_1, test_e_paftools.py::test_subcommand_usage |
-| `pafcluster.js -c` |  | needs k8: test_e_pafcluster.py::test_min_coverage |
-| `pafcluster.js -d` |  | needs k8: test_e_pafcluster.py::test_max_divergence |
-| `pafcluster.js -e` |  | needs k8: test_e_pafcluster.py::test_max_difference (defaults: test_e_pafcluster.py::test_default_thresholds, usage: test_e_pafcluster.py::test_usage) |
+| `paftools.js view` |  | test_e_paftools.py::test_view_blast_like, test_e_paftools.py::test_view_line_length (-l 10, -l 5), test_e_paftools.py::test_view_lastz_cigar_and_maf, test_e_paftools.py::test_subcommand_usage[view]; needs k8 |
+| `paftools.js sam2paf` |  | test_e_paftools.py::test_sam2paf (-p -P -U -L, MD->cs, =/X, clips, /1), pilot test_pilot.py::test_paftools_sam2paf_agrees_with_paf_output; needs k8 |
+| `paftools.js delta2paf` |  | test_e_paftools.py::test_delta2paf (both strands, a run of 1s as one gap); needs k8 |
+| `paftools.js splice2bed` |  | test_e_paftools.py::test_splice2bed (PAF and SAM, -m, colours); `-n` not tested (uses k8 0.x `Map.put`, a TypeError under k8 1.x); needs k8 |
+| `paftools.js gff2bed` |  | test_e_paftools.py::test_gff2bed (GTF, GFF3, -s -j -e -G); `-u`/`-g` not tested; needs k8 |
+| `paftools.js gff2junc` |  | test_e_paftools.py::test_gff2junc (-f, unsorted records); needs k8 |
+| `paftools.js stat` |  | test_e_paftools.py::test_stat_paf (-l -c, every gap-length bin boundary), test_e_paftools.py::test_stat_sam (supplementary of a reverse-strand read); needs k8 |
+| `paftools.js asmstat` |  | test_e_paftools.py::test_asmstat (-l, two assemblies, gzip); needs k8 |
+| `paftools.js asmgene` |  | test_e_paftools.py::test_asmgene (-c -i -e); `-a` not tested; coverage of disjoint partial copies and the string comparison of positions noted in known-bugs/e-paftools-from-source.md; needs k8 |
+| `paftools.js misjoin` |  | test_e_paftools.py::test_misjoin (-l -g -c -e, reverse-strand blocks, inversion at the contig end); needs k8 |
+| `paftools.js liftover` |  | test_e_paftools.py::test_liftover[liftover] (-l -q -d at the divergence boundary, stdin, _t5, a base inside an insertion); needs k8 |
+| `paftools.js liftOver` | alias of liftover | test_e_paftools.py::test_liftover[liftOver]; needs k8 |
+| `paftools.js vcfpair` |  | test_e_paftools.py::test_vcfpair (-m -g -s); needs k8 |
+| `paftools.js call` |  | test_e_paftools.py::test_call (-l and -L apart, reverse-strand indels), test_e_paftools.py::test_call_vcf (-f -s); QSTRAND of `-f` is wrong for a reverse-strand contig followed by another alignment (known-bugs/e-paftools-from-source.md), not asserted; needs k8 |
+| `paftools.js mapeval` |  | test_e_paftools.py::test_mapeval_paf (-r -Q), test_e_paftools.py::test_mapeval_sam_pairs_and_modes (-m 0/1/2, U line); needs k8 |
+| `paftools.js pafcmp` |  | test_e_paftools.py::test_pafcmp (-q, overlap ratio); the "additional test alignments" count always prints 0 (known-bugs/e-paftools-from-source.md) and is not asserted; needs k8 |
+| `paftools.js bedcov` |  | test_e_paftools.py::test_bedcov (-p -e, BED12); `-d` not tested (calls `Interval.dedup`, which does not exist); needs k8 |
+| `paftools.js mason2fq` |  | test_e_paftools.py::test_mason2fq; needs k8 |
+| `paftools.js sim2bed` |  | test_e_paftools.py::test_sim2bed; needs k8 |
+| `paftools.js pbsim2fq` |  | test_e_paftools.py::test_pbsim2fq; needs k8 |
+| `paftools.js badread2fa` |  | test_e_paftools.py::test_badread2fa; needs k8 |
+| `paftools.js junceval` |  | test_e_paftools.py::test_junceval (-l -p -e); needs k8 |
+| `paftools.js exoneval` |  | test_e_paftools.py::test_exoneval (-s); needs k8 |
+| `paftools.js ov-eval` |  | test_e_paftools.py::test_ov_eval (-l, stdin); needs k8 |
+| `paftools.js vcfstat` |  | test_e_paftools.py::test_vcfstat (stdin); needs k8 |
+| `paftools.js sveval` |  | test_e_paftools.py::test_sveval (-e -i, window widened by half the SV length); needs k8 |
+| `paftools.js vcfsel` |  | test_e_paftools.py::test_vcfsel (-l -L); needs k8 |
+| `paftools.js longcs2seq` |  | test_e_paftools.py::test_longcs2seq (-q, short cs error); needs k8 |
+| `paftools.js paf2gff` |  | test_e_paftools.py::test_paf2gff (-a on both strands, start/stop codons, missing AS); needs k8 |
+| `paftools.js version` |  | test_e_paftools.py::test_version_is_the_minimap2_version; needs k8 |
+| `paftools.js` (no command) | usage, exit 1 | test_e_paftools.py::test_no_command_prints_usage_and_exits_1, test_e_paftools.py::test_subcommand_usage; needs k8 |
+| `pafcluster.js -c` |  | test_e_pafcluster.py::test_min_coverage, test_e_pafcluster.py::test_split_hits_are_chained; needs k8 |
+| `pafcluster.js -d` |  | test_e_pafcluster.py::test_max_divergence; needs k8 |
+| `pafcluster.js -e` |  | test_e_pafcluster.py::test_max_difference (defaults: test_e_pafcluster.py::test_default_thresholds, split hits: test_e_pafcluster.py::test_split_hits_are_chained, usage: test_e_pafcluster.py::test_usage); needs k8 |
 
 ### E: mappy and python/minimap2.py (68)
 

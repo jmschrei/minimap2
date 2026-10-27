@@ -46,14 +46,22 @@ says why). If both are present and the build fails, the tests fail.
 
 ### k8 (paftools.js, pafcluster.js)
 
-Tests of the `misc/` scripts run `k8` from `PATH` and are skipped when it
-is not there. k8 1.x release binaries (MIT, github.com/attractivechaos/k8)
-work; for example:
+Tests of the `misc/` scripts (`test_e_paftools.py`, `test_e_pafcluster.py`,
+and one case in `test_pilot.py`) run `k8` from `PATH` and are skipped when it
+is not there. They pass with the k8 1.2 release binary (1.2-r137; MIT,
+github.com/attractivechaos/k8) and take about 2 s; k8 0.x, which
+misc/README.md links to, was not tried. For example:
 
 ```sh
 curl -L https://github.com/attractivechaos/k8/releases/download/v1.2/k8-1.2.tar.bz2 | tar -jxf -
 PATH=$PWD/k8-1.2:$PATH python3 -m pytest tests      # after copying k8-x86_64-Linux to k8-1.2/k8
 ```
+
+Each input is a few hand-made lines whose expected output was worked out
+by hand from the usage text, misc/README.md, the file formats and the
+script. Two defects of base paftools.js are left unasserted: `pafcmp`
+always reports 0 additional test alignments, and `call -f` can write the
+wrong QSTRAND for a reverse-strand contig.
 
 ### Compilers and builds
 
