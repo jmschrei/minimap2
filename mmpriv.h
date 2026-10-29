@@ -34,6 +34,14 @@
 #define mm_seq4_set(s, i, c) ((s)[(i)>>3] |= (uint32_t)(c) << (((i)&7)<<2))
 #define mm_seq4_get(s, i)    ((s)[(i)>>3] >> (((i)&7)<<2) & 0xf)
 
+// a hint only: it never changes a result, so other compilers drop it
+#if defined(__GNUC__) || defined(__clang__)
+#define mm_prefetch(p) __builtin_prefetch((p), 0, 3)
+#else
+#define mm_prefetch(p) ((void)(p))
+#endif
+#define MM_SEED_PF_DIST 16 // how many minimizers or seeds ahead the lookups are prefetched
+
 #define MALLOC(type, len) ((type*)malloc((len) * sizeof(type)))
 #define CALLOC(type, len) ((type*)calloc((len), sizeof(type)))
 #define REALLOC(type, ptr, cnt) ((type*)realloc((ptr), (cnt) * sizeof(type)))
@@ -88,7 +96,11 @@ void mm_write_junc(kstring_t *s, const mm_idx_t *mi, const mm_bseq1_t *t, const 
 // indexing related in index.c
 void mm_idxopt_init(mm_idxopt_t *opt);
 const uint64_t *mm_idx_get(const mm_idx_t *mi, uint64_t minier, int *n);
+void mm_idx_prefetch(const mm_idx_t *mi, uint64_t minier);
 int32_t mm_idx_cal_max_occ(const mm_idx_t *mi, float f);
+int32_t mm_idx_cal_max_occ_mt(const mm_idx_t *mi, float f, int n_threads); // mm_idx_cal_max_occ() walking the buckets on n_threads
+void mm_idx_stat_mt(const mm_idx_t *mi, int n_threads); // mm_idx_stat() walking the buckets on n_threads
+void mm_mapopt_update_mt(mm_mapopt_t *opt, const mm_idx_t *mi, int n_threads); // mm_mapopt_update() with mm_idx_cal_max_occ_mt()
 int mm_idx_getseq2(const mm_idx_t *mi, int is_rev, uint32_t rid, uint32_t st, uint32_t en, uint8_t *seq);
 mm_reg1_t *mm_gen_regs(void *km, uint32_t hash, int qlen, int n_u, uint64_t *u, mm128_t *a, int is_qstrand);
 int mm_idx_bed_read(mm_idx_t *mi, const char *fn, int read_junc);
@@ -131,6 +143,18 @@ FILE *mm_split_init(const char *prefix, const mm_idx_t *mi);
 mm_idx_t *mm_split_merge_prep(const char *prefix, int n_splits, FILE **fp, uint32_t *n_seq_part);
 int mm_split_merge(int n_segs, const char **fn, const mm_mapopt_t *opt, int n_split_idx);
 void mm_split_rm_tmp(const char *prefix, int n_splits);
+
+// Reads the first batch of the query files on a background thread, for mm_map_file_frag_pf to map first.
+// fn, opt and n_threads must match that call's; otherwise the batch is dropped and the files are opened again
+typedef struct mm_prefetch_s mm_prefetch_t;
+mm_prefetch_t *mm_prefetch_start(int n_segs, const char **fn, const mm_mapopt_t *opt, int n_threads);
+int mm_map_file_frag_pf(const mm_idx_t *idx, int n_segs, const char **fn, const mm_mapopt_t *opt, int n_threads, mm_prefetch_t *pf);
+int mm_prefetch_busy(const mm_prefetch_t *pf); // 1 while pf's thread is still reading; 0 for pf == 0
+void mm_prefetch_destroy(mm_prefetch_t *pf); // joins and frees a prefetch that will not be mapped
+void mm_prefetch_release(mm_prefetch_t *pf); // the same without waiting for the read: a read still running frees pf when it ends
+
+// mm_idx_reader_read(); a prebuilt index is loaded on one worker fewer while pf's read runs, so the two use n_threads together
+mm_idx_t *mm_idx_reader_read_pf(mm_idx_reader_t *r, int n_threads, const mm_prefetch_t *pf);
 
 void mm_err_puts(const char *str);
 void mm_err_fwrite(const void *p, size_t size, size_t nitems, FILE *fp);

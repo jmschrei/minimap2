@@ -97,6 +97,7 @@ typedef struct {
 	struct mm_idx_spsc_s *spsc;// splice score (hidden)
 	struct mm_idx_jjump_s *J;  // junctions to create jumps (hidden)
 	void *km, *h;
+	void *mem;                 // blocks holding the hash tables and p[] of an index loaded on several threads (hidden)
 } mm_idx_t;
 
 // minimap2 alignment

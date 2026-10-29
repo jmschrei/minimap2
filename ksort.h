@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdint.h>
 
 typedef struct {
 	void *left, *right;
@@ -113,7 +114,9 @@ typedef const char *ksstr_t;
 				*j = tmp; \
 			} \
 	} \
-	void rs_sort_##name(rstype_t *beg, rstype_t *end, int n_bits, int s) \
+	/* vary: OR of every key ^ the first key; a digit with no bit set in it is constant over the whole \
+	 * input, so its pass would move nothing, and the recursion skips it */ \
+	static void rs_sort_v_##name(rstype_t *beg, rstype_t *end, int n_bits, int s, uint64_t vary) \
 	{ \
 		rstype_t *i; \
 		int size = 1<<n_bits, m = size - 1; \
@@ -138,16 +141,29 @@ typedef const char *ksstr_t;
 		} \
 		for (b->b = beg, k = b + 1; k != be; ++k) k->b = (k-1)->e; \
 		if (s) { \
-			s = s > n_bits? s - n_bits : 0; \
-			for (k = b; k != be; ++k) \
-				if (k->e - k->b > RS_MIN_SIZE) rs_sort_##name(k->b, k->e, n_bits, s); \
-				else if (k->e - k->b > 1) rs_insertsort_##name(k->b, k->e); \
+			do s = s > n_bits? s - n_bits : 0; while (s && !(vary>>s&m)); \
+			if (vary>>s&m) { \
+				for (k = b; k != be; ++k) \
+					if (k->e - k->b > RS_MIN_SIZE) rs_sort_v_##name(k->b, k->e, n_bits, s, vary); \
+					else if (k->e - k->b > 1) rs_insertsort_##name(k->b, k->e); \
+			} \
 		} \
+	} \
+	void rs_sort_##name(rstype_t *beg, rstype_t *end, int n_bits, int s) \
+	{ \
+		rs_sort_v_##name(beg, end, n_bits, s, (uint64_t)-1); \
 	} \
 	void radix_sort_##name(rstype_t *beg, rstype_t *end) \
 	{ \
 		if (end - beg <= RS_MIN_SIZE) rs_insertsort_##name(beg, end); \
-		else rs_sort_##name(beg, end, RS_MAX_BITS, (sizeof_key - 1) * RS_MAX_BITS); \
+		else { \
+			rstype_t *i; \
+			uint64_t k0 = rskey(*beg), vary = 0; \
+			int s = (sizeof_key - 1) * RS_MAX_BITS, m = (1<<RS_MAX_BITS) - 1; \
+			for (i = beg + 1; i != end; ++i) vary |= (uint64_t)rskey(*i) ^ k0; \
+			while (s && !(vary>>s&m)) s = s > RS_MAX_BITS? s - RS_MAX_BITS : 0; \
+			if (vary>>s&m) rs_sort_v_##name(beg, end, RS_MAX_BITS, s, vary); \
+		} \
 	}
 
 #endif

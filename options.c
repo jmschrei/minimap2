@@ -68,10 +68,15 @@ void mm_mapopt_init(mm_mapopt_t *opt)
 
 void mm_mapopt_update(mm_mapopt_t *opt, const mm_idx_t *mi)
 {
+	mm_mapopt_update_mt(opt, mi, 1);
+}
+
+void mm_mapopt_update_mt(mm_mapopt_t *opt, const mm_idx_t *mi, int n_threads)
+{
 	if ((opt->flag & MM_F_SPLICE_FOR) || (opt->flag & MM_F_SPLICE_REV))
 		opt->flag |= MM_F_SPLICE;
 	if (opt->mid_occ <= 0) {
-		opt->mid_occ = mm_idx_cal_max_occ(mi, opt->mid_occ_frac);
+		opt->mid_occ = mm_idx_cal_max_occ_mt(mi, opt->mid_occ_frac, n_threads);
 		if (opt->mid_occ < opt->min_mid_occ)
 			opt->mid_occ = opt->min_mid_occ;
 		if (opt->max_mid_occ > opt->min_mid_occ && opt->mid_occ > opt->max_mid_occ)
@@ -79,7 +84,7 @@ void mm_mapopt_update(mm_mapopt_t *opt, const mm_idx_t *mi)
 	}
 	if (opt->bw_long < opt->bw) opt->bw_long = opt->bw;
 	if (mm_verbose >= 3)
-		fprintf(stderr, "[M::%s::%.3f*%.2f] mid_occ = %d\n", __func__, realtime() - mm_realtime0, cputime() / (realtime() - mm_realtime0), opt->mid_occ);
+		fprintf(stderr, "[M::%s::%.3f*%.2f] mid_occ = %d\n", "mm_mapopt_update", realtime() - mm_realtime0, cputime() / (realtime() - mm_realtime0), opt->mid_occ);
 }
 
 void mm_mapopt_max_intron_len(mm_mapopt_t *opt, int max_intron_len)

@@ -116,6 +116,11 @@ static inline int64_t mm_parse_num(const char *str)
 	return mm_parse_num2(str, 0);
 }
 
+static inline int is_stdin(const char *fn)
+{
+	return fn && strcmp(fn, "-") == 0;
+}
+
 static inline void yes_or_no(mm_mapopt_t *opt, int64_t flag, int long_idx, const char *arg, int yes_to_set)
 {
 	if (yes_to_set) {
@@ -135,7 +140,7 @@ int main(int argc, char *argv[])
 	ketopt_t o = KETOPT_INIT;
 	mm_mapopt_t opt;
 	mm_idxopt_t ipt;
-	int i, c, n_threads = 3, n_parts, old_best_n = -1;
+	int i, c, n_threads = 3, n_parts, old_best_n = -1, n_q = 1, use_pf;
 	float spsc_scale = 0.7f;
 	char *fnw = 0, *rg = 0, *fn_bed_junc = 0, *fn_bed_jump = 0, *fn_bed_pass1 = 0, *fn_spsc = 0, *s, *alt_list = 0;
 	FILE *fp_help = stderr;
@@ -434,10 +439,27 @@ int main(int argc, char *argv[])
 	}
 	if (opt.best_n == 0 && (opt.flag&MM_F_CIGAR) && mm_verbose >= 2)
 		fprintf(stderr, "[WARNING]\033[1;31m `-N 0' reduces alignment accuracy. Please use --secondary=no to suppress secondary alignments.\033[0m\n");
-	while ((mi = mm_idx_reader_read(idx_rdr, n_threads)) != 0) {
+	use_pf = (n_threads > 1 && argc - (o.ind + 1) > 0); // read the first batch of queries on a background thread
+	if (use_pf) {
+		int q_stdin = 0;
+		n_q = (opt.flag & MM_F_FRAG_MODE)? argc - (o.ind + 1) : 1;
+		for (i = o.ind + 1; i < o.ind + 1 + n_q; ++i)
+			if (strcmp(argv[i], "-") == 0) q_stdin = 1;
+		if (q_stdin && (is_stdin(fn_bed_junc) || is_stdin(fn_bed_jump) || is_stdin(fn_bed_pass1) || is_stdin(fn_spsc) || is_stdin(alt_list)))
+			use_pf = 0;
+	}
+	for (;;) {
 		int ret;
+		mm_prefetch_t *pf = 0;
+		if (use_pf && n_threads > 2 && idx_rdr->is_idx && !mm_idx_reader_eof(idx_rdr)) // during the load of a prebuilt index, which gives up a worker until the read ends
+			pf = mm_prefetch_start(n_q, (const char**)&argv[o.ind + 1], &opt, n_threads);
+		if ((mi = mm_idx_reader_read_pf(idx_rdr, n_threads, pf)) == 0) {
+			mm_prefetch_destroy(pf);
+			break;
+		}
 		if ((opt.flag & MM_F_CIGAR) && (mi->flag & MM_I_NO_SEQ)) {
 			fprintf(stderr, "[ERROR] the prebuilt index doesn't contain sequences.\n");
+			mm_prefetch_release(pf);
 			mm_idx_destroy(mi);
 			mm_idx_reader_close(idx_rdr);
 			return 1;
@@ -454,16 +476,19 @@ int main(int argc, char *argv[])
 					fprintf(stderr, "[WARNING]\033[1;31m For a multi-part index, no @SQ lines will be outputted. Please use --split-prefix.\033[0m\n");
 			}
 			if (ret != 0) {
+				mm_prefetch_release(pf);
 				mm_idx_destroy(mi);
 				mm_idx_reader_close(idx_rdr);
 				return 1;
 			}
 		}
+		if (use_pf && pf == 0) // read the first batch while mm_mapopt_update and mm_idx_stat run
+			pf = mm_prefetch_start(n_q, (const char**)&argv[o.ind + 1], &opt, n_threads);
 		if (mm_verbose >= 3)
 			fprintf(stderr, "[M::%s::%.3f*%.2f] loaded/built the index for %d target sequence(s)\n",
 					__func__, realtime() - mm_realtime0, cputime() / (realtime() - mm_realtime0), mi->n_seq);
-		if (argc != o.ind + 1) mm_mapopt_update(&opt, mi);
-		if (mm_verbose >= 3) mm_idx_stat(mi);
+		if (argc != o.ind + 1) mm_mapopt_update_mt(&opt, mi, n_threads - mm_prefetch_busy(pf)); // the walks and a running read share n_threads
+		if (mm_verbose >= 3) mm_idx_stat_mt(mi, n_threads - mm_prefetch_busy(pf));
 		if (fn_bed_junc) {
 			mm_idx_bed_read(mi, fn_bed_junc, 1);
 			if (mi->I == 0 && mm_verbose >= 2)
@@ -492,11 +517,11 @@ int main(int argc, char *argv[])
 		ret = 0;
 		if (!(opt.flag & MM_F_FRAG_MODE)) {
 			for (i = o.ind + 1; i < argc; ++i) {
-				ret = mm_map_file(mi, argv[i], &opt, n_threads);
+				ret = mm_map_file_frag_pf(mi, 1, (const char**)&argv[i], &opt, n_threads, i == o.ind + 1? pf : 0);
 				if (ret < 0) break;
 			}
 		} else {
-			ret = mm_map_file_frag(mi, argc - (o.ind + 1), (const char**)&argv[o.ind + 1], &opt, n_threads);
+			ret = mm_map_file_frag_pf(mi, argc - (o.ind + 1), (const char**)&argv[o.ind + 1], &opt, n_threads, pf);
 		}
 		mm_idx_destroy(mi);
 		if (ret < 0) {

@@ -1,4 +1,4 @@
-CFLAGS=		-g -Wall -O2 -Wc++-compat #-Wextra
+CFLAGS=		-g -Wall -O3 -Wc++-compat #-Wextra
 CPPFLAGS=	-DHAVE_KALLOC
 INCLUDES=
 OBJS=		kthread.o kalloc.o misc.o bseq.o sketch.o sdust.o options.o index.o \
@@ -12,9 +12,15 @@ ifneq ($(aarch64),)
 	arm_neon=1
 endif
 
+# the kernels start on a cache line, so code linked before them cannot move their loops across one
+KSW2_ALIGN=	-falign-functions=64
+
 ifeq ($(arm_neon),) # if arm_neon is not defined
 ifeq ($(sse2only),) # if sse2only is not defined
-	OBJS+=ksw2_extz2_sse41.o ksw2_extd2_sse41.o ksw2_exts2_sse41.o ksw2_extz2_sse2.o ksw2_extd2_sse2.o ksw2_exts2_sse2.o ksw2_dispatch.o
+	OBJS+=ksw2_extz2_sse41.o ksw2_extd2_sse41.o ksw2_exts2_sse41.o ksw2_extz2_sse2.o ksw2_extd2_sse2.o ksw2_exts2_sse2.o \
+		ksw2_extz2_avx2.o ksw2_extd2_avx2.o ksw2_exts2_avx2.o ksw2_extz2_avx512.o ksw2_extd2_avx512.o ksw2_exts2_avx512.o ksw2_dispatch.o \
+		lchain_avx2.o
+	LCHAIN_AVX2=-DMG_LCHAIN_HAVE_AVX2
 else                # if sse2only is defined
 	OBJS+=ksw2_extz2_sse.o ksw2_extd2_sse.o ksw2_exts2_sse.o
 endif
@@ -65,28 +71,54 @@ sdust:sdust.c kalloc.o kalloc.h kdq.h kvec.h kseq.h ketopt.h sdust.h
 ifeq ($(arm_neon),)   # if arm_neon is defined, compile this target with the default setting (i.e. no -msse2)
 ksw2_ll_sse.o:ksw2_ll_sse.c ksw2.h kalloc.h
 		$(CC) -c $(CFLAGS) -msse2 $(CPPFLAGS) $(INCLUDES) $< -o $@
+
+# the SSE2 chaining scores must round as the scalar ones, so no FMA contraction
+lchain.o:lchain.c
+		$(CC) -c $(CFLAGS) -ffp-contract=off $(CPPFLAGS) $(LCHAIN_AVX2) $(INCLUDES) $< -o $@
 endif
 
+# mg_lchain_dp() with 8-lane AVX2 scores, called by lchain.o on CPUs with AVX2 (-mavx2 does not enable FMA)
+lchain_avx2.o:lchain.c mmpriv.h minimap.h bseq.h kseq.h kalloc.h krmq.h
+		$(CC) -c $(CFLAGS) -mavx2 -ffp-contract=off $(CPPFLAGS) -DMG_LCHAIN_AVX2_UNIT $(INCLUDES) $< -o $@
+
 ksw2_extz2_sse41.o:ksw2_extz2_sse.c ksw2.h kalloc.h
-		$(CC) -c $(CFLAGS) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH $(INCLUDES) $< -o $@
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH $(INCLUDES) $< -o $@
 
 ksw2_extz2_sse2.o:ksw2_extz2_sse.c ksw2.h kalloc.h
-		$(CC) -c $(CFLAGS) -msse2 -mno-sse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_SSE2_ONLY $(INCLUDES) $< -o $@
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -msse2 -mno-sse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_SSE2_ONLY $(INCLUDES) $< -o $@
 
 ksw2_extd2_sse41.o:ksw2_extd2_sse.c ksw2.h kalloc.h
-		$(CC) -c $(CFLAGS) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH $(INCLUDES) $< -o $@
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH $(INCLUDES) $< -o $@
 
 ksw2_extd2_sse2.o:ksw2_extd2_sse.c ksw2.h kalloc.h
-		$(CC) -c $(CFLAGS) -msse2 -mno-sse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_SSE2_ONLY $(INCLUDES) $< -o $@
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -msse2 -mno-sse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_SSE2_ONLY $(INCLUDES) $< -o $@
 
 ksw2_exts2_sse41.o:ksw2_exts2_sse.c ksw2.h kalloc.h
-		$(CC) -c $(CFLAGS) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH $(INCLUDES) $< -o $@
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH $(INCLUDES) $< -o $@
 
 ksw2_exts2_sse2.o:ksw2_exts2_sse.c ksw2.h kalloc.h
-		$(CC) -c $(CFLAGS) -msse2 -mno-sse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_SSE2_ONLY $(INCLUDES) $< -o $@
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -msse2 -mno-sse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_SSE2_ONLY $(INCLUDES) $< -o $@
+
+ksw2_extz2_avx2.o:ksw2_extz2_sse.c ksw2.h kalloc.h
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -mavx2 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_AVX2 $(INCLUDES) $< -o $@
+
+ksw2_extd2_avx2.o:ksw2_extd2_sse.c ksw2.h kalloc.h
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -mavx2 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_AVX2 $(INCLUDES) $< -o $@
+
+ksw2_exts2_avx2.o:ksw2_exts2_sse.c ksw2.h kalloc.h
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -mavx2 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_AVX2 $(INCLUDES) $< -o $@
+
+ksw2_extz2_avx512.o:ksw2_extz2_sse.c ksw2.h kalloc.h
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -mavx512bw -mavx512vl $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_AVX512 $(INCLUDES) $< -o $@
+
+ksw2_extd2_avx512.o:ksw2_extd2_sse.c ksw2.h kalloc.h
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -mavx512bw -mavx512vl $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_AVX512 $(INCLUDES) $< -o $@
+
+ksw2_exts2_avx512.o:ksw2_exts2_sse.c ksw2.h kalloc.h
+		$(CC) -c $(CFLAGS) $(KSW2_ALIGN) -mavx512bw -mavx512vl $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_AVX512 $(INCLUDES) $< -o $@
 
 ksw2_dispatch.o:ksw2_dispatch.c ksw2.h
-		$(CC) -c $(CFLAGS) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH $(INCLUDES) $< -o $@
+		$(CC) -c $(CFLAGS) -msse4.1 $(CPPFLAGS) -DKSW_CPU_DISPATCH -DKSW_HAVE_AVX2 -DKSW_HAVE_AVX512 $(INCLUDES) $< -o $@
 
 # NEON-specific targets on ARM
 

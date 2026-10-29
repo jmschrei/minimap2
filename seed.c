@@ -33,12 +33,16 @@ mm_seed_t *mm_seed_collect_all(void *km, const mm_idx_t *mi, const mm128_v *mv, 
 	size_t i;
 	int32_t k;
 	m = (mm_seed_t*)kmalloc(km, mv->n * sizeof(mm_seed_t));
+	for (i = 0; i < mv->n && i < MM_SEED_PF_DIST; ++i)
+		mm_idx_prefetch(mi, mv->a[i].x>>8);
 	for (i = k = 0; i < mv->n; ++i) {
 		const uint64_t *cr;
 		mm_seed_t *q;
 		mm128_t *p = &mv->a[i];
 		uint32_t q_pos = (uint32_t)p->y, q_span = p->x & 0xff;
 		int t;
+		if (i + MM_SEED_PF_DIST < mv->n)
+			mm_idx_prefetch(mi, mv->a[i + MM_SEED_PF_DIST].x>>8);
 		cr = mm_idx_get(mi, p->x>>8, &t);
 		if (t == 0) continue;
 		q = &m[k++];

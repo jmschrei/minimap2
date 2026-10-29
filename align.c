@@ -333,6 +333,78 @@ static void mm_append_cigar(mm_reg1_t *r, uint32_t n_cigar, const uint32_t *ciga
 	}
 }
 
+/* A global fill (approximate max, no approximate Z-drop) of a piece whose query equals its target
+ * base for base, with no N: the all-match path is the unique optimum, so ksw_extz2_sse and
+ * ksw_extd2_sse set only the score and a one-op CIGAR. Taken only where the band cannot bind and
+ * the scoring keeps the kernels' 8-bit cells exact; returns 0 to leave the call to the kernel. */
+static int mm_align_pair_ident(void *km, const mm_mapopt_t *opt, int qlen, const uint8_t *qseq, int tlen, const uint8_t *tseq,
+							   const int8_t *mat, int w, int ksw_flag, ksw_extz_t *ez)
+{
+	int i, q = opt->q, e = opt->e, q2 = opt->q2, e2 = opt->e2, min_sc = mat[0], qe_min;
+	if (qlen != tlen || qlen <= 0 || (w >= 0 && w < qlen)) return 0;
+	if ((ksw_flag & (KSW_EZ_SCORE_ONLY|KSW_EZ_RIGHT|KSW_EZ_GENERIC_SC|KSW_EZ_APPROX_MAX|KSW_EZ_APPROX_DROP|KSW_EZ_EXTZ_ONLY)) != KSW_EZ_APPROX_MAX)
+		return 0;
+	if (q < 0 || e <= 0 || q2 < 0 || e2 < 0 || mat[0] <= 0 || (q + e) + (q2 + e2) + mat[0] > 127) return 0;
+	if (!(q == q2 && e == e2) && !(e > e2 && q + e < q2 + e2)) return 0;
+	for (i = 1; i < 25; ++i) {
+		if (mat[i] > mat[0]) return 0;
+		min_sc = min_sc < mat[i]? min_sc : mat[i];
+	}
+	qe_min = q + e < q2 + e2? q + e : q2 + e2;
+	if (-min_sc > 2 * qe_min) return 0; // the kernels return without an alignment
+	for (i = 0; i + 8 <= qlen; i += 8) {
+		uint64_t x, y;
+		memcpy(&x, qseq + i, 8);
+		memcpy(&y, tseq + i, 8);
+		if ((x ^ y) | (x & 0xfcfcfcfcfcfcfcfcULL)) return 0; // a difference, or a base >= 4
+	}
+	for (; i < qlen; ++i)
+		if (qseq[i] != tseq[i] || qseq[i] >= 4) return 0;
+	ksw_reset_extz(ez);
+	ez->score = qlen * mat[0];
+	ez->cigar = ksw_push_cigar(km, &ez->n_cigar, &ez->m_cigar, ez->cigar, KSW_CIGAR_MATCH, qlen);
+	return 1;
+}
+
+/* An extension (KSW_EZ_EXTZ_ONLY, exact max) whose query equals the first qlen target bases, with
+ * no N. With the band open and the 8-bit cells in range the kernels compute the exact DP, whose
+ * all-match path is the unique optimum to every diagonal cell, so ksw_extz2_sse and ksw_extd2_sse
+ * return what is set here: the max and mqe at (qlen-1, qlen-1), score and mte at (tlen-1, qlen-1)
+ * after one trailing deletion, and one MATCH op. Z-drop cannot fire when zdrop >= max(q, q2): the
+ * best cell past the max trails it by at most q2 + l*e2. Returns 0 to leave the call to the kernel. */
+static int mm_align_pair_ext_ident(void *km, const mm_mapopt_t *opt, int qlen, const uint8_t *qseq, int tlen, const uint8_t *tseq,
+								   const int8_t *mat, int w, int end_bonus, int zdrop, int ksw_flag, ksw_extz_t *ez)
+{
+	int i, q = opt->q, e = opt->e, q2 = opt->q2, e2 = opt->e2, min_sc = mat[0], d, g1, g2;
+	if (qlen <= 0 || qlen > tlen || (w >= 0 && (qlen > w || tlen > w))) return 0;
+	if ((ksw_flag & (KSW_EZ_SCORE_ONLY|KSW_EZ_GENERIC_SC|KSW_EZ_APPROX_MAX|KSW_EZ_APPROX_DROP|KSW_EZ_EXTZ_ONLY)) != KSW_EZ_EXTZ_ONLY)
+		return 0;
+	for (i = 0; i + 8 <= qlen; i += 8) {
+		uint64_t x, y;
+		memcpy(&x, qseq + i, 8);
+		memcpy(&y, tseq + i, 8);
+		if ((x ^ y) | (x & 0xfcfcfcfcfcfcfcfcULL)) return 0; // a difference, or a base >= 4
+	}
+	for (; i < qlen; ++i)
+		if (qseq[i] != tseq[i] || qseq[i] >= 4) return 0;
+	if (q < 0 || e <= 0 || q2 < 0 || e2 < 0 || mat[0] <= 0 || (q + e) + (q2 + e2) + mat[0] > 127) return 0;
+	if (!(q == q2 && e == e2) && !(e > e2 && q + e < q2 + e2)) return 0;
+	if (zdrop >= 0 && zdrop < (q > q2? q : q2)) return 0;
+	for (i = 1; i < 25; ++i) {
+		if (mat[i] > mat[0]) return 0;
+		min_sc = min_sc < mat[i]? min_sc : mat[i];
+	}
+	if (-min_sc > 2 * (q + e)) return 0; // the kernels return without an alignment
+	ksw_reset_extz(ez);
+	ez->max = ez->mqe = qlen * mat[0];
+	ez->max_t = ez->max_q = ez->mqe_t = ez->mte_q = qlen - 1;
+	d = tlen - qlen, g1 = q + d * e, g2 = q2 + d * e2;
+	ez->score = ez->mte = qlen * mat[0] - (d == 0? 0 : g1 < g2? g1 : g2);
+	ez->reach_end = (end_bonus > 0);
+	ez->cigar = ksw_push_cigar(km, &ez->n_cigar, &ez->m_cigar, ez->cigar, KSW_CIGAR_MATCH, qlen);
+	return 1;
+}
+
 static void mm_align_pair(void *km, const mm_mapopt_t *opt, int qlen, const uint8_t *qseq, int tlen, const uint8_t *tseq, const uint8_t *junc,
 						  const int8_t *mat, int w, int end_bonus, int zdrop, int ksw_flag, ksw_extz_t *ez)
 {
@@ -353,6 +425,10 @@ static void mm_align_pair(void *km, const mm_mapopt_t *opt, int qlen, const uint
 		assert((ksw_flag & KSW_EZ_SPLICE_FOR) == 0 || (ksw_flag & KSW_EZ_SPLICE_REV) == 0);
 		if (!(opt->flag & MM_F_SPLICE_OLD)) ksw_flag |= KSW_EZ_SPLICE_CMPLX;
 		ksw_exts2_sse(km, qlen, qseq, tlen, tseq, 5, mat, opt->q, opt->e, opt->q2, opt->noncan, zdrop, end_bonus, opt->junc_bonus, opt->junc_pen, ksw_flag, junc, ez);
+	} else if (!(mm_dbg_flag & MM_DBG_PRINT_ALN_SEQ) && mm_align_pair_ident(km, opt, qlen, qseq, tlen, tseq, mat, w, ksw_flag, ez)) {
+		// identical piece: ez holds what the kernel below would return
+	} else if (!(mm_dbg_flag & MM_DBG_PRINT_ALN_SEQ) && mm_align_pair_ext_ident(km, opt, qlen, qseq, tlen, tseq, mat, w, end_bonus, zdrop, ksw_flag, ez)) {
+		// identical extension: ez holds what the kernel below would return
 	} else if (opt->q == opt->q2 && opt->e == opt->e2) { // affine gap
 		ksw_extz2_sse(km, qlen, qseq, tlen, tseq, 5, mat, opt->q, opt->e, w, zdrop, end_bonus, ksw_flag, ez);
 	} else { // dual affine gap

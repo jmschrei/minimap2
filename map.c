@@ -2,6 +2,7 @@
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 #include "kthread.h"
 #include "kvec.h"
 #include "kalloc.h"
@@ -112,7 +113,10 @@ static mm128_t *collect_seed_hits_heap(void *km, const mm_mapopt_t *opt, int max
 	heap = (mm128_t*)kmalloc(km, n_m * sizeof(mm128_t));
 	a = (mm128_t*)kmalloc(km, *n_a * sizeof(mm128_t));
 
+	for (i = 0; i < n_m && i < MM_SEED_PF_DIST; ++i)
+		mm_prefetch(m[i].cr);
 	for (i = 0, heap_size = 0; i < n_m; ++i) {
+		if (i + MM_SEED_PF_DIST < n_m) mm_prefetch(m[i + MM_SEED_PF_DIST].cr);
 		if (m[i].n > 0) {
 			heap[heap_size].x = m[i].cr[0];
 			heap[heap_size].y = (uint64_t)i<<32;
@@ -165,18 +169,98 @@ static mm128_t *collect_seed_hits_heap(void *km, const mm_mapopt_t *opt, int max
 	return a;
 }
 
+// whether two kept seeds on one query strand parity share a position run. One k-mer ends at each reference position,
+// so without such a pair (and outside --qstrand) the anchors of collect_seed_hits have distinct keys.
+static int seeds_share_run(void *km, int n_m, const mm_seed_t *m)
+{
+	size_t i, h, mask, size = 16;
+	uint64_t *tab;
+	if (n_m < 2) return 0;
+	while (size < (size_t)n_m * 2) size <<= 1;
+	mask = size - 1;
+	tab = (uint64_t*)kcalloc(km, size, sizeof(uint64_t));
+	for (i = 0; i < (size_t)n_m; ++i) {
+		uint64_t x = (uint64_t)(uintptr_t)m[i].cr | (m[i].q_pos & 1); // cr is non-null and 8-byte aligned
+		for (h = (size_t)((x * 0x9E3779B97F4A7C15ULL) >> 32) & mask; tab[h] && tab[h] != x; h = (h + 1) & mask) {}
+		if (tab[h] == x) break;
+		tab[h] = x;
+	}
+	kfree(km, tab);
+	return i < (size_t)n_m;
+}
+
+static inline int mm_bit_len(uint64_t v)
+{
+	int n = 0;
+	for (; v; v >>= 1) ++n;
+	return n;
+}
+
+// sort a[0..n) by x with an LSD radix sort; equals radix_sort_128x() when all keys are distinct. The digits cover only
+// the bits that differ between keys: bit 63, then the low bits of bits 32-62, then the low bits of bits 0-31.
+static void radix_sort_128x_distinct(void *km, mm128_t *a, int64_t n)
+{
+	uint64_t x_or = 0, x_and = ~0ULL, v, pm, rm, sm, k;
+	uint32_t *cnt, dm;
+	int64_t i;
+	int pb, rb, nb, np, d, p, dmax;
+	mm128_t *b, *src, *dst, *t;
+	if (n <= 64 || n > (int64_t)UINT32_MAX) {
+		radix_sort_128x(a, a + n);
+		return;
+	}
+	for (i = 0; i < n; ++i) x_or |= a[i].x, x_and &= a[i].x;
+	v = x_or ^ x_and;
+	if (v == 0) return;
+	sm = v >> 63, rb = mm_bit_len(v << 1 >> 33), pb = mm_bit_len((uint32_t)v);
+	nb = (int)sm + rb + pb;
+	dmax = n < 256? 8 : n < 4096? 10 : 13;
+	np = (nb + dmax - 1) / dmax, d = (nb + np - 1) / np, dm = (1U << d) - 1;
+	pm = (1ULL << pb) - 1, rm = (1ULL << rb) - 1;
+	b = (mm128_t*)kmalloc(km, n * sizeof(mm128_t) + ((size_t)np << d) * sizeof(uint32_t));
+	cnt = (uint32_t*)(b + n);
+	memset(cnt, 0, ((size_t)np << d) * sizeof(uint32_t));
+#define LSD_KEY(x) (((x) & pm) | ((x) >> 32 & rm) << pb | ((x) >> 63 & sm) << (pb + rb))
+	for (i = 0; i < n; ++i) {
+		k = LSD_KEY(a[i].x);
+		for (p = 0; p < np; ++p)
+			++cnt[(size_t)p << d | (k >> p * d & dm)];
+	}
+	for (p = 0; p < np; ++p) {
+		uint32_t j, s = 0, c, *q = cnt + ((size_t)p << d);
+		for (j = 0; j <= dm; ++j)
+			c = q[j], q[j] = s, s += c;
+	}
+	for (p = 0, src = a, dst = b; p < np; ++p) {
+		uint32_t *q = cnt + ((size_t)p << d);
+		int sh = p * d;
+		for (i = 0; i < n; ++i) {
+			k = LSD_KEY(src[i].x);
+			dst[q[k >> sh & dm]++] = src[i];
+		}
+		t = src, src = dst, dst = t;
+	}
+#undef LSD_KEY
+	if (src != a) memcpy(a, src, n * sizeof(mm128_t));
+	kfree(km, b);
+}
+
 static mm128_t *collect_seed_hits(void *km, const mm_mapopt_t *opt, int max_occ, const mm_idx_t *mi, const char *qname, const mm128_v *mv, int qlen, int64_t *n_a, int *rep_len,
-								  int *n_mini_pos, uint64_t **mini_pos)
+								  int *n_mini_pos, uint64_t **mini_pos, int *distinct)
 {
 	int i, n_m;
 	mm_seed_t *m;
 	mm128_t *a;
 	m = mm_collect_matches(km, &n_m, qlen, max_occ, opt->max_max_occ, opt->occ_dist, mi, mv, n_a, rep_len, n_mini_pos, mini_pos);
+	*distinct = *n_a > 64 && !(opt->flag & MM_F_QSTRAND) && !seeds_share_run(km, n_m, m);
 	a = (mm128_t*)kmalloc(km, *n_a * sizeof(mm128_t));
+	for (i = 0; i < n_m && i < MM_SEED_PF_DIST; ++i)
+		mm_prefetch(m[i].cr);
 	for (i = 0, *n_a = 0; i < n_m; ++i) {
 		mm_seed_t *q = &m[i];
 		const uint64_t *r = q->cr;
 		uint32_t k;
+		if (i + MM_SEED_PF_DIST < n_m) mm_prefetch(m[i + MM_SEED_PF_DIST].cr);
 		for (k = 0; k < q->n; ++k) {
 			int32_t is_self, rpos = (uint32_t)r[k] >> 1;
 			mm128_t *p;
@@ -199,7 +283,8 @@ static mm128_t *collect_seed_hits(void *km, const mm_mapopt_t *opt, int max_occ,
 		}
 	}
 	kfree(km, m);
-	radix_sort_128x(a, a + (*n_a));
+	if (*distinct) radix_sort_128x_distinct(km, a, *n_a);
+	else radix_sort_128x(a, a + (*n_a));
 	return a;
 }
 
@@ -226,7 +311,7 @@ static mm_reg1_t *align_regs(const mm_mapopt_t *opt, const mm_idx_t *mi, void *k
 
 void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const char **seqs, int *n_regs, mm_reg1_t **regs, mm_tbuf_t *b, const mm_mapopt_t *opt, const char *qname)
 {
-	int i, j, rep_len, qlen_sum, n_regs0, n_mini_pos;
+	int i, j, rep_len, qlen_sum, n_regs0, n_mini_pos, distinct = 0;
 	int max_chain_gap_qry, max_chain_gap_ref, is_splice = !!(opt->flag & MM_F_SPLICE), is_sr = !!(opt->flag & MM_F_SR), is_sr_rna = !!(opt->flag & MM_F_SR_RNA);
 	uint32_t hash;
 	int64_t n_a;
@@ -250,7 +335,7 @@ void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const ch
 	collect_minimizers(b->km, opt, mi, n_segs, qlens, seqs, &mv);
 	if (opt->q_occ_frac > 0.0f) mm_seed_mz_flt(b->km, &mv, opt->mid_occ, opt->q_occ_frac);
 	if (opt->flag & MM_F_HEAP_SORT) a = collect_seed_hits_heap(b->km, opt, opt->mid_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos);
-	else a = collect_seed_hits(b->km, opt, opt->mid_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos);
+	else a = collect_seed_hits(b->km, opt, opt->mid_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos, &distinct);
 
 	if (mm_dbg_flag & MM_DBG_PRINT_SEED) {
 		fprintf(stderr, "RS\t%d\n", rep_len);
@@ -286,7 +371,8 @@ void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const ch
 			int32_t i;
 			for (i = 0, n_a = 0; i < n_regs0; ++i) n_a += (int32_t)u[i];
 			kfree(b->km, u);
-			radix_sort_128x(a, a + n_a);
+			if (distinct) radix_sort_128x_distinct(b->km, a, n_a); // a subset of the first collection's anchors
+			else radix_sort_128x(a, a + n_a);
 			a = mg_lchain_rmq(opt->max_gap, opt->rmq_inner_dist, opt->bw_long, opt->max_chain_skip, opt->rmq_size_cap, opt->min_cnt, opt->min_chain_score,
 							  chn_pen_gap, chn_pen_skip, n_a, a, &n_regs0, &u, b->km);
 		}
@@ -309,7 +395,7 @@ void mm_map_frag_core(const mm_idx_t *mi, int n_segs, const int *qlens, const ch
 			kfree(b->km, u);
 			kfree(b->km, mini_pos);
 			if (opt->flag & MM_F_HEAP_SORT) a = collect_seed_hits_heap(b->km, opt, opt->max_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos);
-			else a = collect_seed_hits(b->km, opt, opt->max_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos);
+			else a = collect_seed_hits(b->km, opt, opt->max_occ, mi, qname, &mv, qlen_sum, &n_a, &rep_len, &n_mini_pos, &mini_pos, &distinct);
 			a = mg_lchain_dp(max_chain_gap_ref, max_chain_gap_qry, opt->bw, opt->max_chain_skip, opt->max_chain_iter, opt->min_cnt, opt->min_chain_score,
 							 chn_pen_gap, chn_pen_skip, is_splice, n_segs, n_a, a, &n_regs0, &u, b->km);
 		}
@@ -411,6 +497,9 @@ typedef struct {
 	int n_parts;
 	uint32_t *rid_shift;
 	FILE *fp_split, **fp_parts;
+
+	int has_first; // step 0 returns first once instead of reading (a batch read by mm_prefetch_start)
+	void *first;
 } pipeline_t;
 
 typedef struct {
@@ -420,15 +509,18 @@ typedef struct {
 	int *n_reg, *seg_off, *n_seg, *rep_len, *frag_gap;
 	mm_reg1_t **reg;
 	mm_tbuf_t **buf;
+	uint64_t *order; // step 1 at -t > 1: kt_for's i-th job is fragment (uint32_t)order[i]; 0 for input order
 } step_t;
 
 static void worker_for(void *_data, long i, int tid) // kt_for() callback
 {
     step_t *s = (step_t*)_data;
-	int qlens[MM_MAX_SEG], j, off = s->seg_off[i], pe_ori = s->p->opt->pe_ori;
+	int qlens[MM_MAX_SEG], j, off, pe_ori = s->p->opt->pe_ori;
 	const char *qseqs[MM_MAX_SEG];
 	double t = 0.0;
 	mm_tbuf_t *b = s->buf[tid];
+	if (s->order) i = (uint32_t)s->order[i];
+	off = s->seg_off[i];
 	assert(s->n_seg[i] <= MM_MAX_SEG);
 	if (mm_dbg_flag & MM_DBG_PRINT_QNAME) {
 		fprintf(stderr, "QR\t%s\t%d\t%d\n", s->seq[off].name, tid, s->seq[off].l_seq);
@@ -538,42 +630,87 @@ static void merge_hits(step_t *s)
 	km_destroy(km);
 }
 
+static step_t *read_batch(pipeline_t *p)
+{
+	int i, j;
+	int with_qual = (!!(p->opt->flag & MM_F_OUT_SAM) && !(p->opt->flag & MM_F_NO_QUAL));
+	int with_comment = !!(p->opt->flag & MM_F_COPY_COMMENT);
+	int frag_mode = (p->n_fp > 1 || !!(p->opt->flag & MM_F_FRAG_MODE));
+	step_t *s;
+	s = (step_t*)calloc(1, sizeof(step_t));
+	if (p->n_fp > 1) s->seq = mm_bseq_read_frag2(p->n_fp, p->fp, p->mini_batch_size, with_qual, with_comment, &s->n_seq);
+	else s->seq = mm_bseq_read3(p->fp[0], p->mini_batch_size, with_qual, with_comment, frag_mode, &s->n_seq);
+	if (s->seq) {
+		s->p = p;
+		for (i = 0; i < s->n_seq; ++i)
+			s->seq[i].rid = p->n_processed++;
+		s->buf = (mm_tbuf_t**)calloc(p->n_threads, sizeof(mm_tbuf_t*));
+		for (i = 0; i < p->n_threads; ++i)
+			s->buf[i] = mm_tbuf_init();
+		s->n_reg = (int*)calloc(5 * s->n_seq, sizeof(int));
+		s->seg_off = s->n_reg + s->n_seq; // seg_off, n_seg, rep_len and frag_gap are allocated together with n_reg
+		s->n_seg = s->seg_off + s->n_seq;
+		s->rep_len = s->n_seg + s->n_seq;
+		s->frag_gap = s->rep_len + s->n_seq;
+		s->reg = (mm_reg1_t**)calloc(s->n_seq, sizeof(mm_reg1_t*));
+		for (i = 1, j = 0; i <= s->n_seq; ++i)
+			if (i == s->n_seq || !frag_mode || !mm_qname_same(s->seq[i-1].name, s->seq[i].name)) {
+				s->n_seg[s->n_frag] = i - j;
+				s->seg_off[s->n_frag++] = j;
+				j = i;
+			}
+		return s;
+	}
+	free(s);
+	return 0;
+}
+
+// Fragments longest first (total bases; ties in input order), so a long read late in a batch does not run alone at its end.
+// Only for a batch with a long tail: one whose longest fragment, at 64 times the batch's mean cost per base (per-read cost
+// spreads that far on ONT and HiFi reads), would take over half of one thread's share. 0 for input order.
+static uint64_t *frag_order(const step_t *s, int n_threads)
+{
+	int i, j, sorted = 1;
+	uint64_t *a, max_len = 0, tot = 0;
+	if (s->n_frag < 2) return 0;
+	a = (uint64_t*)malloc(s->n_frag * sizeof(uint64_t));
+	for (i = 0; i < s->n_frag; ++i) {
+		uint64_t len = 0;
+		for (j = 0; j < s->n_seg[i]; ++j)
+			len += s->seq[s->seg_off[i] + j].l_seq;
+		if (len > UINT32_MAX) len = UINT32_MAX;
+		tot += len;
+		if (len > max_len) max_len = len;
+		a[i] = (uint64_t)(UINT32_MAX - len) << 32 | (uint32_t)i;
+		if (i > 0 && a[i] < a[i - 1]) sorted = 0;
+	}
+	if (sorted || max_len * n_threads * 128 <= tot) {
+		free(a);
+		return 0;
+	}
+	radix_sort_64(a, a + s->n_frag);
+	return a;
+}
+
 static void *worker_pipeline(void *shared, int step, void *in)
 {
 	int i, j, k;
     pipeline_t *p = (pipeline_t*)shared;
     if (step == 0) { // step 0: read sequences
-		int with_qual = (!!(p->opt->flag & MM_F_OUT_SAM) && !(p->opt->flag & MM_F_NO_QUAL));
-		int with_comment = !!(p->opt->flag & MM_F_COPY_COMMENT);
-		int frag_mode = (p->n_fp > 1 || !!(p->opt->flag & MM_F_FRAG_MODE));
-        step_t *s;
-        s = (step_t*)calloc(1, sizeof(step_t));
-		if (p->n_fp > 1) s->seq = mm_bseq_read_frag2(p->n_fp, p->fp, p->mini_batch_size, with_qual, with_comment, &s->n_seq);
-		else s->seq = mm_bseq_read3(p->fp[0], p->mini_batch_size, with_qual, with_comment, frag_mode, &s->n_seq);
-		if (s->seq) {
-			s->p = p;
-			for (i = 0; i < s->n_seq; ++i)
-				s->seq[i].rid = p->n_processed++;
-			s->buf = (mm_tbuf_t**)calloc(p->n_threads, sizeof(mm_tbuf_t*));
-			for (i = 0; i < p->n_threads; ++i)
-				s->buf[i] = mm_tbuf_init();
-			s->n_reg = (int*)calloc(5 * s->n_seq, sizeof(int));
-			s->seg_off = s->n_reg + s->n_seq; // seg_off, n_seg, rep_len and frag_gap are allocated together with n_reg
-			s->n_seg = s->seg_off + s->n_seq;
-			s->rep_len = s->n_seg + s->n_seq;
-			s->frag_gap = s->rep_len + s->n_seq;
-			s->reg = (mm_reg1_t**)calloc(s->n_seq, sizeof(mm_reg1_t*));
-			for (i = 1, j = 0; i <= s->n_seq; ++i)
-				if (i == s->n_seq || !frag_mode || !mm_qname_same(s->seq[i-1].name, s->seq[i].name)) {
-					s->n_seg[s->n_frag] = i - j;
-					s->seg_off[s->n_frag++] = j;
-					j = i;
-				}
-			return s;
-		} else free(s);
+		if (p->has_first) {
+			p->has_first = 0;
+			return p->first;
+		}
+		return read_batch(p);
     } else if (step == 1) { // step 1: map
-		if (p->n_parts > 0) merge_hits((step_t*)in);
-		else kt_for(p->n_threads, worker_for, in, ((step_t*)in)->n_frag);
+		step_t *s = (step_t*)in;
+		if (p->n_parts > 0) merge_hits(s);
+		else {
+			if (p->n_threads > 1) s->order = frag_order(s, p->n_threads);
+			kt_for(p->n_threads, worker_for, s, s->n_frag);
+			free(s->order);
+			s->order = 0;
+		}
 		return in;
     } else if (step == 2) { // step 2: output
 		void *km = 0;
@@ -642,14 +779,14 @@ static void *worker_pipeline(void *shared, int step, void *in)
     return 0;
 }
 
-static mm_bseq_file_t **open_bseqs(int n, const char **fn)
+static mm_bseq_file_t **open_bseqs(int n, const char **fn, int quiet)
 {
 	mm_bseq_file_t **fp;
 	int i, j;
 	fp = (mm_bseq_file_t**)calloc(n, sizeof(mm_bseq_file_t*));
 	for (i = 0; i < n; ++i) {
 		if ((fp[i] = mm_bseq_open(fn[i])) == 0) {
-			if (mm_verbose >= 1)
+			if (mm_verbose >= 1 && !quiet)
 				fprintf(stderr, "ERROR: failed to open file '%s': %s\n", fn[i], strerror(errno));
 			for (j = 0; j < i; ++j)
 				mm_bseq_close(fp[j]);
@@ -660,17 +797,124 @@ static mm_bseq_file_t **open_bseqs(int n, const char **fn)
 	return fp;
 }
 
-int mm_map_file_frag(const mm_idx_t *idx, int n_segs, const char **fn, const mm_mapopt_t *opt, int n_threads)
+struct mm_prefetch_s {
+	pthread_t tid;
+	const char **fn;
+	mm_mapopt_t opt; // a copy: the caller may update its own (mm_mapopt_update) while the batch is read
+	pipeline_t pl;
+	step_t *s;
+	int done; // set when the read has ended; see mm_prefetch_busy()
+	int left; // set by the first of the ended read and mm_prefetch_release(); the second frees pf
+};
+
+static void prefetch_drop(mm_prefetch_t *pf);
+
+static void *prefetch_worker(void *data)
+{
+	mm_prefetch_t *pf = (mm_prefetch_t*)data;
+	pf->pl.fp = open_bseqs(pf->pl.n_fp, pf->fn, 1); // quiet: on a failure mm_map_file_frag_pf opens the files again and reports the error there
+	if (pf->pl.fp) pf->s = read_batch(&pf->pl);
+	__atomic_store_n(&pf->done, 1, __ATOMIC_RELEASE);
+	if (__atomic_exchange_n(&pf->left, 1, __ATOMIC_ACQ_REL)) { // released while reading
+		if (pf->pl.fp) prefetch_drop(pf);
+		free(pf);
+	}
+	return 0;
+}
+
+int mm_prefetch_busy(const mm_prefetch_t *pf)
+{
+	return pf && !__atomic_load_n(&pf->done, __ATOMIC_ACQUIRE);
+}
+
+mm_prefetch_t *mm_prefetch_start(int n_segs, const char **fn, const mm_mapopt_t *opt, int n_threads)
+{
+	mm_prefetch_t *pf;
+	if (n_segs < 1) return 0;
+	pf = (mm_prefetch_t*)calloc(1, sizeof(mm_prefetch_t));
+	pf->fn = fn;
+	pf->opt = *opt;
+	pf->pl.n_fp = n_segs;
+	pf->pl.opt = &pf->opt;
+	pf->pl.n_threads = n_threads > 1? n_threads : 1;
+	pf->pl.mini_batch_size = opt->mini_batch_size;
+	if (pthread_create(&pf->tid, 0, prefetch_worker, pf) != 0) {
+		free(pf);
+		return 0;
+	}
+	return pf;
+}
+
+static void prefetch_drop(mm_prefetch_t *pf) // frees the batch and closes the files of a prefetch whose read has ended and opened them
+{
+	step_t *s = pf->s;
+	int i;
+	if (s) {
+		for (i = 0; i < pf->pl.n_threads; ++i) mm_tbuf_destroy(s->buf[i]);
+		for (i = 0; i < s->n_seq; ++i) {
+			free(s->seq[i].seq); free(s->seq[i].name);
+			free(s->seq[i].qual); free(s->seq[i].comment);
+		}
+		free(s->buf); free(s->reg); free(s->n_reg); free(s->seq); free(s);
+	}
+	for (i = 0; i < pf->pl.n_fp; ++i)
+		mm_bseq_close(pf->pl.fp[i]);
+	free(pf->pl.fp);
+}
+
+// Joins the prefetch thread; returns its files and batch through pl when they are what step 0 would read for these arguments
+static void prefetch_take(mm_prefetch_t *pf, pipeline_t *pl, const char **fn, const mm_mapopt_t *opt)
+{
+	const int64_t step0_flags = MM_F_OUT_SAM | MM_F_NO_QUAL | MM_F_COPY_COMMENT | MM_F_FRAG_MODE;
+	int i, same;
+	pthread_join(pf->tid, 0);
+	if (pf->pl.fp == 0) {
+		free(pf);
+		return;
+	}
+	same = (pf->pl.n_fp == pl->n_fp && pf->pl.n_threads == pl->n_threads && pf->opt.mini_batch_size == opt->mini_batch_size
+			&& (pf->opt.flag & step0_flags) == (opt->flag & step0_flags));
+	for (i = 0; same && i < pl->n_fp; ++i)
+		same = (strcmp(pf->fn[i], fn[i]) == 0);
+	if (same) {
+		pl->fp = pf->pl.fp;
+		pl->n_processed = pf->pl.n_processed;
+		pl->has_first = 1, pl->first = pf->s;
+		if (pf->s) pf->s->p = pl;
+	} else prefetch_drop(pf); // the files are read again from the start
+	free(pf);
+}
+
+void mm_prefetch_destroy(mm_prefetch_t *pf)
+{
+	if (pf == 0) return;
+	pthread_join(pf->tid, 0);
+	if (pf->pl.fp) prefetch_drop(pf);
+	free(pf);
+}
+
+void mm_prefetch_release(mm_prefetch_t *pf)
+{
+	if (pf == 0) return;
+	pthread_detach(pf->tid);
+	if (__atomic_exchange_n(&pf->left, 1, __ATOMIC_ACQ_REL)) { // the read has ended
+		if (pf->pl.fp) prefetch_drop(pf);
+		free(pf);
+	}
+}
+
+int mm_map_file_frag_pf(const mm_idx_t *idx, int n_segs, const char **fn, const mm_mapopt_t *opt, int n_threads, mm_prefetch_t *pf)
 {
 	int i, pl_threads;
 	pipeline_t pl;
-	if (n_segs < 1) return -1;
 	memset(&pl, 0, sizeof(pipeline_t));
 	pl.n_fp = n_segs;
-	pl.fp = open_bseqs(pl.n_fp, fn);
+	pl.n_threads = n_threads > 1? n_threads : 1;
+	if (pf) prefetch_take(pf, &pl, fn, opt);
+	if (n_segs < 1) return -1;
+	if (pl.fp == 0) pl.fp = open_bseqs(pl.n_fp, fn, 0);
 	if (pl.fp == 0) return -1;
 	pl.opt = opt, pl.mi = idx;
-	pl.n_threads = n_threads > 1? n_threads : 1;
 	pl.mini_batch_size = opt->mini_batch_size;
 	if (opt->split_prefix)
 		pl.fp_split = mm_split_init(opt->split_prefix, idx);
@@ -683,6 +927,11 @@ int mm_map_file_frag(const mm_idx_t *idx, int n_segs, const char **fn, const mm_
 		mm_bseq_close(pl.fp[i]);
 	free(pl.fp);
 	return 0;
+}
+
+int mm_map_file_frag(const mm_idx_t *idx, int n_segs, const char **fn, const mm_mapopt_t *opt, int n_threads)
+{
+	return mm_map_file_frag_pf(idx, n_segs, fn, opt, n_threads, 0);
 }
 
 int mm_map_file(const mm_idx_t *idx, const char *fn, const mm_mapopt_t *opt, int n_threads)
@@ -698,7 +947,7 @@ int mm_split_merge(int n_segs, const char **fn, const mm_mapopt_t *opt, int n_sp
 	if (n_segs < 1 || n_split_idx < 1) return -1;
 	memset(&pl, 0, sizeof(pipeline_t));
 	pl.n_fp = n_segs;
-	pl.fp = open_bseqs(pl.n_fp, fn);
+	pl.fp = open_bseqs(pl.n_fp, fn, 0);
 	if (pl.fp == 0) return -1;
 	pl.opt = opt;
 	pl.mini_batch_size = opt->mini_batch_size;
