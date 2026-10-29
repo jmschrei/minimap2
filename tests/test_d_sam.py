@@ -252,7 +252,7 @@ def _sa_sorted(entries):
 def test_soft_clipped_supplementary(synth, mixed, base_sam):
 	"""-Y (minimap2.1): supplementary records use soft clipping and carry the whole read and its
 	qualities; primary and unmapped records are as without -Y. Secondary records keep their
-	fields except SEQ and QUAL, which may be '*' or the whole read (SAM spec; base minimap2 writes
+	fields except SEQ and QUAL, which may be '*' or the whole read (SAM spec; minimap2 writes
 	the whole read under -Y)."""
 	m = mixed[0]
 	r = H.map_reads(base_sam.argv[-2], mixed[1], ["-a", "-Y"])
@@ -369,7 +369,7 @@ def test_long_cigar_option_keeps_short_cigars(mixed, base_sam):
 def test_cs_md(synth, mixed, base_sam, opt, tag, long_form):
 	"""--cs[=short|long] and --MD (minimap2.1): every mapped record carries the tag, equal to its
 	recomputation from the genome (cs:Z as the man page defines it; MD as the SAM spec, without
-	the final 0 base minimap2 omits); the rest of each record is the default output."""
+	the final 0 minimap2 omits); the rest of each record is the default output."""
 	r = H.map_reads(base_sam.argv[-2], mixed[1], ["-a", opt])
 	sam = H.parse_sam(r.stdout)
 	assert H.sam_invariant_errors(sam, synth.genome, mixed[3]) == []
@@ -447,7 +447,7 @@ def end_reads(synth, tmp_path_factory):
 def test_tags_at_read_ends(synth, end_reads, opt, tag):
 	"""MD:Z, cs:Z (short and long), ds:Z and --eqx CIGARs of alignments that start or end with a
 	mismatch or a one-base match equal their recomputation from the genome (the first or last
-	number of MD may be 0 or 1; MD omits a final 0, known-bugs/md-trailing-zero.md)."""
+	number of MD may be 0 or 1; minimap2's MD omits a final 0 after a mismatch)."""
 	fq, reads = end_reads
 	sam = H.map_reads(synth.fasta, fq, ["-a", opt], preset="sr").sam()
 	long_cs = opt == "--cs=long"
@@ -496,7 +496,7 @@ def three_seg(synth, tmp_path_factory):
 def test_three_segment_template(synth, three_seg):
 	"""With --frag=yes, adjacent reads of one name form a template of three segments (SAM spec
 	1.4): every record has FLAG 0x1 and FI:i (the segment index); the first segment has 0x40 and
-	not 0x80, the last 0x80 and not 0x40 (the middle one: known-bugs/d-middle-segment-flags.md);
+	not 0x80, the last 0x80 and not 0x40 (minimap2 sets neither on the middle one, which is not checked);
 	RNEXT/PNEXT give the next segment's primary position, the first segment being next after the
 	last; 0x8 and 0x20 follow that next segment; an unmapped segment is placed at the position of
 	a mapped segment of its template; mapped segments lie at the truth. PAF names the segments
@@ -511,7 +511,7 @@ def test_three_segment_template(synth, three_seg):
 		assert [r.tags["FI"] for r in prim] == [0, 1, 2]
 		for i, r in enumerate(prim):
 			assert r.flag & 0x1
-			if i != 1:  # the middle segment: known-bugs/d-middle-segment-flags.md
+			if i != 1:  # minimap2 sets neither 0x40 nor 0x80 on the middle segment
 				assert bool(r.flag & 0x40) == (i == 0) and bool(r.flag & 0x80) == (i == 2)
 			nxt = prim[(i + 1) % 3]
 			if nxt.is_unmapped:

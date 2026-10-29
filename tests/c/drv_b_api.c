@@ -1,4 +1,4 @@
-/* Area B driver: mapping through the libminimap2 API (minimap.h) with the
+/* C driver: mapping through the libminimap2 API (minimap.h) with the
  * mm_mapopt_t fields and MM_F_* flags set directly, printing every mm_reg1_t
  * and mm_extra_t field so that Python can compare them with the command
  * line's PAF for the corresponding options. Uses only minimap.h.

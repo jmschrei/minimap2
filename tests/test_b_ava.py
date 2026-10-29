@@ -1,4 +1,4 @@
-"""Area B: all-vs-all overlapping (-x ava-ont, -X, -D, -P, --dual, --no-long-join), strand
+"""All-vs-all overlapping (-x ava-ont, -X, -D, -P, --dual, --no-long-join), strand
 restrictions (--for-only, --rev-only, --qstrand), --max-qlen and --heap-sort, checked against the
 simulated reads' positions."""
 

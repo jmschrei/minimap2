@@ -1,33 +1,27 @@
 # Test targets
 
-Every target of the minimap2 test suite, listed from the source before any
-area test was written: every command-line option of `minimap2`, every `-x`
-preset, every public name in `minimap.h`, every non-static function in the
-C files the suite covers, the `make extra` programs, `misc/paftools.js` and
-`misc/pafcluster.js`, and the mappy binding. Writers tick a row by replacing
-`[ ]` in its Tested column with the test that covers it, e.g.
+Every target of the minimap2 test suite, listed from the source: every
+command-line option of `minimap2`, every `-x` preset, every public name in
+`minimap.h`, every non-static function in the C files the suite covers, the
+`make extra` programs, `misc/paftools.js` and `misc/pafcluster.js`, and the
+mappy binding. The Tested column names the tests that cover each row, e.g.
 `test_b_chain.py::test_max_chain_skip`. A row that cannot be tested
 (platform-only code, or behaviour that contradicts the documentation) gets
 a short reason instead. In the Tested column, `partial` marks a row only part
 of whose behaviour is checked, `needs k8` a `misc/` script whose tests skip
-without k8, and "a defect of base minimap2" behaviour that contradicts the
+without k8, and "a minimap2 defect" behaviour that contradicts the
 documentation, which is reported rather than tested.
 
-Rows are grouped by area: each writer edits only its own `## Area X`
-section, so parallel edits never touch the same lines.
+## Parts
 
-## Areas
+Rows are grouped in five parts, named after the prefix of the files that
+test them: `tests/test_<a>_*.py`, `tests/helpers_<a>.py`,
+`tests/c/drv_<a>_*.c` and `tests/pins/<a>/`. The shared files
+(`minimap2_build.py`, `minimap2_helpers.py`, `conftest.py`,
+`c/minimap2_test.h`, `pytest.ini`, `test_harness.py`, `test_pilot.py`)
+belong to no part.
 
-Five areas, each written in parallel by one writer. A writer creates and
-edits only the files with its prefix, so no two writers edit the same file:
-`tests/test_<a>_*.py`, `tests/helpers_<a>.py`, `tests/c/drv_<a>_*.c` and
-`tests/pins/<a>/`. The shared harness (`minimap2_build.py`,
-`minimap2_helpers.py`, `conftest.py`, `c/minimap2_test.h`, `pytest.ini`,
-`README.md`, `test_harness.py`, `test_pilot.py`) is not edited by area
-writers; a helper one area needs goes in its `helpers_<a>.py`, and one
-several areas need is reported back for the harness.
-
-| Area | Prefix | Scope |
+| Part | Prefix | Scope |
 |:-----|:-------|:------|
 | A | `a` | Input, sketching and index: bseq.c (FASTA/FASTQ, gzip, several files, stdin), sketch.c (minimizers, HPC), sdust.c and the `sdust` program, index.c (building, `-d`, `.mmi` load/dump/round trip, `-k -w -H -I`, `--idx-no-seq`, `--bucket-bits`, multi-part indexes, name and sequence lookup), splitidx.c and `--split-prefix`, the index parameters of every preset, `-T`. |
 | B | `b` | Seeding, chaining, alignment and hit selection: seed.c, lchain.c (DP and RMQ chaining), hit.c, align.c, esterr.c, ksw2_*.c, `mm_mapopt_update`/`mm_idx_cal_max_occ` (`-f -U --q-occ-frac -e`), the chaining, scoring and selection options, `-c`, `--alt`, `--qstrand`, the all-vs-all options (`-X -D -P --dual --no-long-join`), and the mapping parameters of the long-read and assembly presets. |
@@ -35,38 +29,9 @@ several areas need is reported back for the harness.
 | D | `d` | Output, CLI and API: format.c (SAM and PAF fields and tags, `--cs --MD --ds -c`'s cg:Z, `-L -Y -y -Q --eqx -R --secondary --secondary-seq --write-junc --paf-no-hit --sam-hit-only -o`), every remaining CLI option (`--seed -t -K -2 -v -x` errors, `--version/--help`, debug and kalloc options, deprecated options), option validation (`mm_check_opt`), thread and batch invariance, the libminimap2 API through C drivers (`mm_set_opt`, `mm_map`, `mm_map_file`, `mm_gen_cs/ds/MD`, `mm_tbuf_*`), `minimap2-lite`, kthread.c, kalloc.c and misc.c. |
 | E | `e` | mappy and misc/: the mappy binding built from the source under test (`Aligner` and its arguments, `map`, `seq`, `seq_names`, `Alignment` fields, `revcomp`, `fastx_read`, `ThreadBuffer`, `verbose`, options passed through `extra_flags`/`scoring`), `python/minimap2.py`, and every `paftools.js` subcommand and `pafcluster.js` (skipped without k8). |
 
-Differences from the initially proposed split, and why:
-
-* jump.c is C's only. The first proposal listed it under both B and C; its one
-  non-static function, `mm_jump_split`, runs only for spliced short reads
-  with junction annotation (`-j`, `--pass1`), which C owns.
-* The junction, jump and splice-score readers in index.c
-  (`mm_idx_bed_read`, `mm_idx_bed_junc`, `mm_idx_jjump_read`,
-  `mm_idx_jump_get`, `mm_idx_spsc_*`) are C's, not A's: they serve
-  `--junc-bed`, `-j`, `--pass1` and `--spsc`.
-* `mm_idx_alt_read` and `--alt/--alt-drop` are B's: minimap2.1 lists
-  `--alt` under indexing options, but it only changes hit selection and
-  MAPQ (`mm_mark_alt` in hit.c).
-* `mm_mapopt_update` and `mm_idx_cal_max_occ` are B's: they turn `-f` into
-  the seed occurrence threshold.
-* `mm_map_frag_core` (map.c) is B's: every read goes through it, and B owns
-  seeding to alignment. `mm_map`, `mm_map_file` and the thread buffers are
-  D's (API); `mm_map_frag` and `mm_map_file_frag` are C's (fragments).
-* `mm_split_merge` (map.c) is A's with the rest of `--split-prefix`.
-* `-T` (SDUST masking of queries) is A's with sdust.c.
-* `mm_set_opt` and `mm_check_opt` are D's as API and validation; the
-  presets themselves are split by what they set (the two Presets tables).
-* `--write-junc` stays in D (mm_write_junc is in
-  format.c); it needs C's spliced inputs, which the shared simulator
-  provides.
-* `--seed` stays in D, although it acts in map.c: it seeds
-  the hash that breaks ties between equal hits.
-* kalloc.c, kthread.c and misc.c are D's: reached through `--no-kalloc`,
-  `--cap-kalloc`, `-t`, `-2` and I/O errors. kalloc internals are not pinned.
-
 ksw2.h also declares `ksw_extz`, `ksw_extd`, `ksw_extf2_sse`, `ksw_gg`, `ksw_gg2` and `ksw_gg2_sse`, which no file in the tree defines; they are not targets.
 
-| Area | Rows |
+| Part | Rows |
 |:--|--:|
 | A | 131 |
 | B | 208 |
@@ -75,7 +40,7 @@ ksw2.h also declares `ksw_extz`, `ksw_extd`, `ksw_extf2_sse`, `ksw_gg`, `ksw_gg2
 | E | 102 |
 | total | 659 |
 
-## Area A
+## A: input, sketching and index
 
 ### A: Command-line options (9)
 
@@ -130,7 +95,7 @@ ksw2.h also declares `ksw_extz`, `ksw_extd`, `ksw_extf2_sse`, `ksw_gg`, `ksw_gg2
 | `mm_idx_is_idx` | test_a_index.py::test_mmi_round_trip (dump_load: index size, FASTA, empty, 3-byte, "-", missing) |
 | `mm_idx_load` | test_a_index.py::test_mmi_round_trip |
 | `mm_idx_dump` | test_a_index.py::test_mmi_round_trip (bytes equal `-d`) |
-| `mm_idx_str` | test_a_index.py::test_c_api_idx_str_init_build_gen (name2id on it not tested: a defect of base minimap2) |
+| `mm_idx_str` | test_a_index.py::test_c_api_idx_str_init_build_gen (name2id on it not tested: a minimap2 defect) |
 | `mm_idx_stat` | test_a_index.py::test_c_api_idx_stat (numbers only) |
 | `mm_idx_destroy` | every C case; NULL in dump_load |
 | `mm_idx_index_name` | test_a_index.py::test_c_api_lookup_names_and_sequences, test_a_index.py::test_duplicate_target_names |
@@ -164,10 +129,10 @@ Fields of `mm_reg1_t` and `mm_extra_t` are results a C driver can check against 
 | `mm128_v.n` |  | test_a_sketch.py::test_sketch_with_kalloc_pool_and_appending (n, a; m only as capacity through appending) |
 | `mm128_v.m` |  | test_a_sketch.py::test_sketch_with_kalloc_pool_and_appending (n, a; m only as capacity through appending) |
 | `mm128_v.a` |  | test_a_sketch.py::test_sketch_with_kalloc_pool_and_appending (n, a; m only as capacity through appending) |
-| `mm_idx_seq_t.name` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is area B) |
-| `mm_idx_seq_t.offset` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is area B) |
-| `mm_idx_seq_t.len` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is area B) |
-| `mm_idx_seq_t.is_alt` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is area B) |
+| `mm_idx_seq_t.name` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is in part B) |
+| `mm_idx_seq_t.offset` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is in part B) |
+| `mm_idx_seq_t.len` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is in part B) |
+| `mm_idx_seq_t.is_alt` |  | drv_a_index check_seqs / reader (is_alt only as 0; --alt is in part B) |
 | `mm_idx_t.b` |  | drv_a_index reader, idx_str, build, gen; .mmi headers in I |
 | `mm_idx_t.w` |  | drv_a_index reader, idx_str, build, gen; .mmi headers in I |
 | `mm_idx_t.k` |  | drv_a_index reader, idx_str, build, gen; .mmi headers in I |
@@ -220,7 +185,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | index.c | `mm_idx_getseq2` |  | drv_a_index check_seqs |
 | index.c | `mm_idx_gen` |  | test_a_index.py::test_c_api_idx_str_init_build_gen (gen case: parts, mini-batches, NULL file, end of file) |
 | index.c | `mm_idx_build` | deprecated API | test_a_index.py::test_c_api_idx_str_init_build_gen |
-| index.c | `mm_idx_str` | known issue: ids in its name hash are unset (do not test mm_idx_name2id on it) | test_a_index.py::test_c_api_idx_str_init_build_gen (name2id on it not tested: a defect of base minimap2) |
+| index.c | `mm_idx_str` | known issue: ids in its name hash are unset | test_a_index.py::test_c_api_idx_str_init_build_gen (name2id on it not tested: a minimap2 defect) |
 | index.c | `mm_idx_dump` |  | test_a_index.py::test_mmi_round_trip (bytes equal `-d`) |
 | index.c | `mm_idx_load` |  | test_a_index.py::test_mmi_round_trip |
 | index.c | `mm_idx_is_idx` |  | test_a_index.py::test_mmi_round_trip (dump_load: index size, FASTA, empty, 3-byte, "-", missing) |
@@ -251,15 +216,15 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | gzip input (target and query) |  | test_a_input.py::test_read_file_forms_map_identically, test_a_input.py::test_target_file_forms_give_the_same_index, test_a_input.py::test_query_and_target_from_stdin (gzip on stdin) |
 | several query files in one run (mapped one after another) | main.c loops over files unless --frag | test_a_input.py::test_several_query_files |
 | query from stdin (`-`) |  | test_a_input.py::test_query_and_target_from_stdin (also the target) |
-| empty query file; empty sequences; reads shorter than k |  | test_a_input.py::test_empty_short_and_unmappable_queries (the SAM line of an empty sequence or name is invalid: a defect of base minimap2, not tested) |
+| empty query file; empty sequences; reads shorter than k |  | test_a_input.py::test_empty_short_and_unmappable_queries (the SAM line of an empty sequence or name is invalid: a minimap2 defect, not tested) |
 | index built on the fly from FASTA equals the prebuilt .mmi for the same preset |  | test_a_index.py::test_prebuilt_index_equals_on_the_fly, test_a_index.py::test_multi_part_index_mapping |
-| `.mmi` round trip: -d output, reload, byte-identical re-dump | .mmi bytes may be pinned | for content (header, names, lengths, sequence, minimizer table) by test_a_index.py::test_mmi_round_trip; a re-dump is not byte-identical in base minimap2 (hash tables are written in table order, which changes on reload), and no document promises byte identity, so bytes are compared only between `-d` and mm_idx_dump of a freshly built index, and pinned for `-d` (test_a_index.py::test_synth_index_bytes) |
+| `.mmi` round trip: -d output, reload, byte-identical re-dump | .mmi bytes may be pinned | for content (header, names, lengths, sequence, minimizer table) by test_a_index.py::test_mmi_round_trip; a re-dump is not byte-identical in minimap2 (hash tables are written in table order, which changes on reload), and no document promises byte identity, so bytes are compared only between `-d` and mm_idx_dump of a freshly built index, and pinned for `-d` (test_a_index.py::test_synth_index_bytes) |
 | multi-part index (-I small): parts, @SQ warning without --split-prefix |  | test_a_index.py::test_multi_part_index_file, test_a_index.py::test_multi_part_index_mapping (no @SQ, warning) |
 | target file that is neither FASTA nor .mmi; missing target file | error, exit 1 | test_a_index.py::test_target_errors (a non-FASTA file is read as an index of no sequence and exit 0: the test requires only that no read maps) |
-| duplicate target names | warning from mm_idx_index_name | test_a_index.py::test_duplicate_target_names (duplicate @SQ lines without a warning: a defect of base minimap2) |
-| minimizers equal a brute-force (w,k) minimizer scan with minimap2's hash64 | sketch.c; HPC with -H | test_a_sketch.py::test_minimizers_equal_the_reference_scan (exact, 14 (w,k,H) combinations), test_a_sketch.py::test_minimizers_with_tied_kmers, test_a_sketch.py::test_minimizers_around_ambiguous_bases, test_a_index.py::test_mmi_* (index tables against the reference); first-window and before-N edges are a defect of base minimap2, checked only as properties |
+| duplicate target names | warning from mm_idx_index_name | test_a_index.py::test_duplicate_target_names (duplicate @SQ lines without a warning: a minimap2 defect) |
+| minimizers equal a brute-force (w,k) minimizer scan with minimap2's hash64 | sketch.c; HPC with -H | test_a_sketch.py::test_minimizers_equal_the_reference_scan (exact, 14 (w,k,H) combinations), test_a_sketch.py::test_minimizers_with_tied_kmers, test_a_sketch.py::test_minimizers_around_ambiguous_bases, test_a_index.py::test_mmi_* (index tables against the reference); first-window and before-N edges are a minimap2 defect, checked only as properties |
 
-## Area B
+## B: seeding, chaining, alignment and hit selection
 
 ### B: Command-line options (48)
 
@@ -273,7 +238,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `-g` | yes | usage, man |  | test_b_chain.py::test_max_gap_g_boundary (exact boundary from brute-force anchors); test_chains_never_cross_contigs_strands_or_max_gap; test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `-X` | no | usage, man |  | test_b_ava.py::test_X_equals_its_expansion; test_b_presets.py (ava presets) |
 | `-s` / `--min-dp-score` | yes | usage, man |  | test_b_align.py::test_peak_score_ms_and_s_boundary (-s ms keeps, ms+1 drops); test_b_api.py::test_api_fields_and_flags_match_command_line |
-| `-c` | no | usage, man | base-level alignment; PAF cg:Z (B owns alignment, D owns the cg:Z format) | test_b_align.py (every test: cg:Z, NM, columns 10/11, nn, de recomputed; AS = CIGAR score); test_b_api.py::test_api_fields_and_flags_match_command_line[-c] |
+| `-c` | no | usage, man | base-level alignment; PAF cg:Z (alignment in part B, the cg:Z format in part D) | test_b_align.py (every test: cg:Z, NM, columns 10/11, nn, de recomputed; AS = CIGAR score); test_b_api.py::test_api_fields_and_flags_match_command_line[-c] |
 | `-p` | yes | usage, man |  | test_b_hit.py::test_pri_ratio_p (boundary at the brute-force S2/S1); test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `-M` / `--mask-level` | yes | man |  | test_b_hit.py::test_mask_level_M (boundary from brute-force chain coordinates); test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `-n` / `--min-count` | yes | usage, man |  | test_b_chain.py::test_min_chain_score_and_count_boundaries, test_min_count_and_score_filters; test_b_api.py::test_api_fields_and_flags_match_command_line |
@@ -287,7 +252,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `-N` | yes | usage, man |  | test_b_hit.py::test_repeat_reads_secondaries_and_N (-N 2, 1, 0 with warning); test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `-P` / `--all-chain` | no | man |  | test_b_hit.py::test_all_chains_P, test_repeat_reads_secondaries_and_N; test_b_ava.py::test_D_drops_self_mappings |
 | `-e` | yes | man |  | test_b_seed.py::test_e_samples_repetitive_minimizers, test_collect_matches_against_brute_force; test_b_api.py::test_api_fields_and_flags_match_command_line; test_b_seed.py::test_many_copy_occurrence_thresholds, test_b_seed.py::test_sampled_minimizers_pinned |
-| `-U` | yes | man |  | test_b_seed.py::test_occurrence_bounds_U (INT2 > INT1 only: INT2 <= INT1 is a defect of base minimap2, not tested); test_b_seed.py::test_many_copy_occurrence_thresholds |
+| `-U` | yes | man |  | test_b_seed.py::test_occurrence_bounds_U (INT2 > INT1 only: INT2 <= INT1 is a minimap2 defect, not tested); test_b_seed.py::test_many_copy_occurrence_thresholds |
 | `--max-chain-skip` | yes | man |  | test_b_chain.py::test_random_anchor_sets_against_brute_force (off = optimum; 0 loses score), test_chain_score_and_count_substitutions[no-heuristics]; test_b_api.py::test_api_fields_and_flags_match_command_line; test_b_chain.py::test_chaining_heuristics_pinned |
 | `--min-dp-len` | yes | - |  | partial; test_b_align.py::test_alignment_options_keep_reads_correct (reads at truth, AS = CIGAR score at 10 and 5000); test_b_api.py::test_api_fields_and_flags_match_command_line; no independently derived exact effect |
 | `--no-long-join` | no | man |  | test_b_chain.py::test_bandwidth_r_and_long_join, test_max_gap_g_boundary; test_b_api.py::test_api_fields_and_flags_match_command_line |
@@ -299,13 +264,13 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `--dual` | yes | man |  | test_b_ava.py::test_ava_ont_reports_true_overlaps (no), test_ava_dual_yes_reports_both_directions (yes) |
 | `--max-clip-ratio` | yes | - |  | test_b_align.py::test_max_clip_ratio_boundary (0.333 vs 0.334 on a 1000/1000/1000 read; one-sided clipping kept); test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `--min-occ-floor` | yes | man |  | test_b_seed.py::test_occurrence_bounds_U[--min-occ-floor] |
-| `--score-N` | yes | man |  | test_b_align.py::test_AS_is_cigar_score_under_custom_scoring[score-N] (3), preset tests (1); --score-N 0 is a defect of base minimap2, not tested |
+| `--score-N` | yes | man |  | test_b_align.py::test_AS_is_cigar_score_under_custom_scoring[score-N] (3), preset tests (1); --score-N 0 is a minimap2 defect, not tested |
 | `--no-end-flt` | no | man |  | partial; test_b_align.py::test_alignment_options_keep_reads_correct; test_b_api.py::test_api_fields_and_flags_match_command_line; no independently derived exact effect |
 | `--hard-mask-level` | no | man |  | test_b_hit.py::test_hard_mask_level; test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `--cap-sw-mem` | yes | man | sets max_sw_mat (main.c comment says --cap-sw-mat) | test_b_align.py::test_cap_sw_mem (1: no alignment; 0 and 1g: default output); test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `--max-qlen` | yes | man |  | test_b_ava.py::test_max_qlen (L vs L-1, PAF and SAM); test_b_api.py::test_api_fields_and_flags_match_command_line |
 | `--max-chain-iter` | yes | man |  | test_b_chain.py::test_max_chain_iter, test_random_anchor_sets_against_brute_force; test_b_api.py::test_api_fields_and_flags_match_command_line; test_b_chain.py::test_chaining_heuristics_pinned |
-| `--chain-gap-scale` | yes | man |  | test_b_chain.py::test_chain_score_with_indels, test_gap_cost_formula; test_b_api.py::test_api_fields_and_flags_match_command_line; default (0.8 vs documented 1.0) is a defect of base minimap2, not tested |
+| `--chain-gap-scale` | yes | man |  | test_b_chain.py::test_chain_score_with_indels, test_gap_cost_formula; test_b_api.py::test_api_fields_and_flags_match_command_line; default (0.8 vs documented 1.0) is a minimap2 defect, not tested |
 | `--alt` | yes | man | listed under indexing options in minimap2.1; changes hit selection (mm_mark_alt) | test_b_hit.py::test_alt_contigs; test_b_seed.py::test_alt_read_api |
 | `--alt-drop` | yes | man |  | test_b_hit.py::test_alt_contigs (0 and default 0.15) |
 | `--mask-len` | yes | man |  | test_b_hit.py::test_mask_len (boundary at the brute-force uncovered length); test_b_api.py::test_api_fields_and_flags_match_command_line |
@@ -443,7 +408,7 @@ Fields of `mm_reg1_t` and `mm_extra_t` are results a C driver can check against 
 | `mm_mapopt_t.min_mid_occ` | -U, --min-occ-floor | test_b_api.py::test_api_fields_and_flags_match_command_line (set directly, output equals -U) |
 | `mm_mapopt_t.max_mid_occ` | -U ,INT2 | test_b_api.py::test_api_fields_and_flags_match_command_line (set directly, output equals -U ,INT2) |
 | `mm_mapopt_t.mid_occ` | -f INT | test_b_api.py::test_api_fields_and_flags_match_command_line (set directly, output equals -f INT) |
-| `mm_mapopt_t.max_occ` | -f ,INT2 | partial; -f ,INT2 only acts in the short-read re-chaining (area C); API sets it without an observable long-read effect |
+| `mm_mapopt_t.max_occ` | -f ,INT2 | partial; -f ,INT2 only acts in the short-read re-chaining (part C); API sets it without an observable long-read effect |
 | `mm_mapopt_t.max_max_occ` | no option | test_b_api.py::test_max_max_occ; test_b_seed.py::test_collect_matches_against_brute_force[2-8-100] |
 | `mm_mapopt_t.occ_dist` | -e | test_b_api.py::test_api_fields_and_flags_match_command_line (set directly, output equals -e) |
 | `mm_mapopt_t.max_sw_mat` | --cap-sw-mem | test_b_api.py::test_api_fields_and_flags_match_command_line (set directly, output equals --cap-sw-mem) |
@@ -487,16 +452,16 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | ksw2_extz2_sse.c | `ksw_extz2_sse` |  | test_b_ksw.py::test_global_alignment_matches_reference[extz2], test_extension_matches_reference[extz2], test_band_limits_global_alignment, test_gap_left_and_right_alignment |
 | ksw2_extd2_sse.c | `ksw_extd2_sse41` |  | test_b_ksw.py::test_simd_variants_agree |
 | ksw2_extd2_sse.c | `ksw_extd2_sse2` |  | test_b_ksw.py::test_simd_variants_agree; sse2only configuration |
-| ksw2_extd2_sse.c | `ksw_extd2_sse` |  | test_b_ksw.py::test_global_alignment_matches_reference[extd2], test_extension_matches_reference[extd2]; a defect of base minimap2 for narrow bands |
+| ksw2_extd2_sse.c | `ksw_extd2_sse` |  | test_b_ksw.py::test_global_alignment_matches_reference[extd2], test_extension_matches_reference[extd2]; a minimap2 defect for narrow bands |
 | ksw2_exts2_sse.c | `ksw_exts2_sse41` |  | test_b_ksw.py::test_simd_variants_agree_spliced |
 | ksw2_exts2_sse.c | `ksw_exts2_sse2` |  | test_b_ksw.py::test_simd_variants_agree_spliced |
-| ksw2_exts2_sse.c | `ksw_exts2_sse` | splice DP; reached through C's splice tests as well | test_b_ksw.py::test_spliced_kernel_places_intron, test_spliced_kernel_long_gap_threshold; test_b_align.py::test_end_seed_pen_boundary |
+| ksw2_exts2_sse.c | `ksw_exts2_sse` | splice DP; reached through the splice tests of part C as well | test_b_ksw.py::test_spliced_kernel_places_intron, test_spliced_kernel_long_gap_threshold; test_b_align.py::test_end_seed_pen_boundary |
 | ksw2_ll_sse.c | `ksw_ll_qinit` |  | test_b_ksw.py::test_local_alignment_ll_i16 |
 | ksw2_ll_sse.c | `ksw_ll_i16` |  | test_b_ksw.py::test_local_alignment_ll_i16; inversion and end-seed tests |
 | ksw2_dispatch.c | `__cpuidex` | Intel-derived wrapper with unknown terms: off limits, test only through dispatch | (through dispatch only); off limits; exercised by every kernel call in the dispatch build |
 | ksw2_dispatch.c | `ksw_extz2_sse` |  | test_b_ksw.py (entry point in the dispatch build) |
 | ksw2_dispatch.c | `ksw_extd2_sse` |  | test_b_ksw.py |
-| ksw2_dispatch.c | `ksw_exts2_sse` | splice DP; reached through C's splice tests as well | test_b_ksw.py::test_spliced_kernel_places_intron, test_simd_variants_agree_spliced |
+| ksw2_dispatch.c | `ksw_exts2_sse` | splice DP; reached through the splice tests of part C as well | test_b_ksw.py::test_spliced_kernel_places_intron, test_simd_variants_agree_spliced |
 | misc.c | `radix_sort_128x` | macro-generated (KRADIX_SORT_INIT) | test_b_chain.py::test_sort_helpers |
 | misc.c | `radix_sort_64` | macro-generated (KRADIX_SORT_INIT) | test_b_chain.py::test_sort_helpers |
 | misc.c | `ks_ksmall_uint32_t` | macro-generated (KSORT_INIT_GENERIC); used by mm_idx_cal_max_occ | test_b_chain.py::test_sort_helpers; test_b_seed.py::test_cal_max_occ |
@@ -510,7 +475,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | inversion rescue: tp:A:I/i alignments |  | test_b_align.py::test_inversion_rescue, test_inversion_mapq_from_flanks |
 | chimeric reads: supplementary alignments, SA:Z |  | test_b_align.py::test_chimeric_reads_supplementary_and_SA |
 
-## Area C
+## C: splice and short reads
 
 ### C: Command-line options (20)
 
@@ -518,8 +483,8 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 
 | Option | Argument | Documented | Notes | Tested |
 |:--|:--|:--|:--|:--|
-| `-G` / `--max-intron-len` | yes | usage, man | only takes effect in splice mode (mm_mapopt_max_intron_len) | test_c_splice.py::test_max_intron_len, test_c_api.py::test_max_intron_len_api; order dependence and N > -G is a defect of base minimap2, not tested |
-| `-u` | yes | usage, man |  | test_c_splice.py::test_u_option_chooses_strand (b, f, r), test_c_splice.py::test_u_n_ignores_splice_signals (n), test_c_splice.py::test_u_invalid_is_an_error; ts:A under -un is a defect of base minimap2, not tested |
+| `-G` / `--max-intron-len` | yes | usage, man | only takes effect in splice mode (mm_mapopt_max_intron_len) | test_c_splice.py::test_max_intron_len, test_c_api.py::test_max_intron_len_api; order dependence and N > -G is a minimap2 defect, not tested |
+| `-u` | yes | usage, man |  | test_c_splice.py::test_u_option_chooses_strand (b, f, r), test_c_splice.py::test_u_n_ignores_splice_signals (n), test_c_splice.py::test_u_invalid_is_an_error; ts:A under -un is a minimap2 defect, not tested |
 | `-F` | yes | usage, man |  | test_c_pairs.py::test_max_fragment_length (default 800, 500, 1000, pairs at the limit and one base past it) |
 | `-C` / `--cost-non-gt-ag` | yes | man |  | test_c_splice.py::test_noncanonical_cost_C_and_J (-J0 cost per site, no effect under -J1) |
 | `-J` | yes | usage, man |  | test_c_splice.py::test_noncanonical_cost_C_and_J, test_c_splice.py::test_splice_flank_under_J0, test_c_splice.py::test_junc_bed_decides_a_tie (-J0) |
@@ -528,15 +493,15 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `--sr` | optional | man |  | test_c_pairs.py::test_option_values (--sr, =dna, =no, invalid value), test_c_pairs.py::test_splice_sr_single_end_equals_its_definition (=rna) |
 | `--frag` | yes | man |  | test_c_pairs.py::test_frag_mode_groups_reads_by_name, test_c_pairs.py::test_three_segment_fragments, test_c_pairs.py::test_option_values |
 | `--no-pairing` | no | - | deprecated; same as --pairing=no | test_c_pairs.py::test_pairing_no_aligns_ends_independently (identical to --pairing=no) |
-| `--splice-flank` | yes | man |  | partial: test_c_splice.py::test_splice_flank_under_J0 (yes under -J0 and -J1, no under -J0); no effect under -J1 is a defect of base minimap2, not tested |
+| `--splice-flank` | yes | man |  | partial: test_c_splice.py::test_splice_flank_under_J0 (yes under -J0 and -J1, no under -J0); no effect under -J1 is a minimap2 defect, not tested |
 | `--junc-bed` | yes | man |  | test_c_splice.py::test_junc_bed_decides_a_tie (both gene strands, BED12 and BED6, lines without strand, -J0), test_c_splice.py pins |
 | `--junc-bonus` | yes | man |  | test_c_splice.py::test_junc_bed_decides_a_tie (9, 5, 0), test_c_splice.py::test_spsc_scores_decide_a_tie (no effect with --spsc) |
 | `--spsc` | yes | man |  | test_c_splice.py::test_spsc_scores_decide_a_tie (both strands), test_c_splice.py::test_spsc_scores_are_capped, test_c_api.py::test_spsc_reader |
 | `--junc-pen` | yes | - |  | test_c_splice.py::test_spsc_scores_decide_a_tie (same output as --spsc0), test_c_splice.py::test_junc_bed_decides_a_tie (no effect with --junc-bed) |
-| `--pairing` | yes | man |  | test_c_pairs.py::test_pairing_places_repetitive_mates (strong, no), test_c_pairs.py::test_option_values (strong, invalid), test_c_srna.py::test_splice_sr_pairs_against_truth (weak via splice:sr), test_c_pairs.py::test_splice_sr_single_end_equals_its_definition; weak with -x sr is a defect of base minimap2, not tested; test_c_pairs.py::test_pairs_of_repetitive_mates |
+| `--pairing` | yes | man |  | test_c_pairs.py::test_pairing_places_repetitive_mates (strong, no), test_c_pairs.py::test_option_values (strong, invalid), test_c_srna.py::test_splice_sr_pairs_against_truth (weak via splice:sr), test_c_pairs.py::test_splice_sr_single_end_equals_its_definition; weak with -x sr is a minimap2 defect, not tested; test_c_pairs.py::test_pairs_of_repetitive_mates |
 | `--jump-min-match` | yes | man |  | test_c_srna.py::test_jump_min_match (5, 8, 9, 13) |
 | `--pass1` | yes | man |  | test_c_srna.py::test_pass1_score_threshold (4, 5, 6), test_c_srna.py::test_two_pass_workflow, test_c_srna.py::test_jump_prefers_annotation_over_pass1 |
-| `--spsc-scale` | yes | man |  | partial: test_c_splice.py::test_spsc_scores_decide_a_tie (0.5, 0.7, 1), test_c_api.py::test_spsc_reader (0.6, 0.7, none); values above 1 ignored, is a defect of base minimap2, not tested |
+| `--spsc-scale` | yes | man |  | partial: test_c_splice.py::test_spsc_scores_decide_a_tie (0.5, 0.7, 1), test_c_api.py::test_spsc_reader (0.6, 0.7, none); values above 1 ignored, is a minimap2 defect, not tested |
 | `--spsc0` | yes | man | same field as --junc-pen | test_c_splice.py::test_spsc_scores_decide_a_tie (0, 5, 9; positions not in FILE) |
 
 ### C: Presets: mapping parameters (6)
@@ -544,7 +509,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | Preset | Documented | Notes | Tested |
 |:--|:--|:--|:--|
 | `short` | - | alias of sr; undocumented | test_c_pairs.py::test_option_values (same output as sr), test_c_api.py::test_preset_option_fields (same options) |
-| `sr` | usage, man |  | test_c_pairs.py (all tests), test_c_api.py::test_preset_option_fields, test_c_api.py::test_map_frag_api, test_c_pairs.py pin; expansion mismatch (-O12,32, FR orientation) is a defect of base minimap2, not tested |
+| `sr` | usage, man |  | test_c_pairs.py (all tests), test_c_api.py::test_preset_option_fields, test_c_api.py::test_map_frag_api, test_c_pairs.py pin; expansion mismatch (-O12,32, FR orientation) is a minimap2 defect, not tested |
 | `splice` | usage, man |  | test_c_splice.py::test_splice_ont_like_cdna, test_c_splice.py::test_splice_preset_equivalences, test_c_api.py::test_preset_option_fields, test_c_splice.py pins |
 | `splice:hq` | usage, man |  | test_c_splice.py::test_u_option_chooses_strand, test_c_splice.py::test_splice_preset_equivalences, test_c_api.py::test_map_splice_api, test_c_splice.py PAF pin |
 | `splice:sr` | usage, man |  | test_c_srna.py (all tests), test_c_pairs.py::test_splice_sr_single_end_equals_its_definition, test_c_api.py::test_preset_option_fields, test_c_srna.py pin |
@@ -634,10 +599,10 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | Behaviour | Notes | Tested |
 |:--|:--|:--|
 | paired-end from two files, interleaved one file, /1 /2 suffixes |  | test_c_pairs.py::test_paired_input_forms_agree, test_c_pairs.py::test_frag_mode_minibatches_keep_mates_together, test_c_pairs.py::test_input_checks, test_c_pairs.py::test_pairs_with_a_split_index |
-| frag mode: reads with the same name in one file |  | test_c_pairs.py::test_frag_mode_groups_reads_by_name, test_c_pairs.py::test_three_segment_fragments (middle-segment flags are a defect of base minimap2) |
+| frag mode: reads with the same name in one file |  | test_c_pairs.py::test_frag_mode_groups_reads_by_name, test_c_pairs.py::test_three_segment_fragments (middle-segment flags are a minimap2 defect) |
 | spliced reads: introns, ts:A, junction BED bonus |  | test_c_splice.py::test_splice_ont_like_cdna, test_c_splice.py::test_junc_bed_decides_a_tie, test_c_srna.py::test_splice_sr_pairs_against_truth, test_pilot (splice:hq) |
 
-## Area D
+## D: output, the command line and the API
 
 ### D: Command-line options (33)
 
@@ -657,7 +622,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `-R` | yes | usage, man |  | test_d_sam.py::test_read_group (header, RG:Z, ID length 255/256, errors), test_d_api.py::test_sam_header_writer, test_d_api.py::test_mm_map_file_matches_cli. |
 | `-h` / `--help` | no | - | --help: usage to stdout, exit 0; no arguments: usage to stderr, exit 1 | test_d_cli.py::test_help_and_usage, test_d_cli.py::test_usage_shows_current_values_and_preset_first. |
 | `-L` | no | usage, man |  | test_d_api.py::test_long_cigar (boundaries 65535/65536 with clips, supplementary, secondary, -Y, --secondary-seq), test_d_sam.py::test_long_cigar_option_keeps_short_cigars. |
-| `-y` | no | usage, man |  | test_d_sam.py::test_copy_comment, test_d_paf.py::test_paf_copy_comment, test_d_api.py::test_writers_match_cli (its --paf-no-hit line: a defect of base minimap2). |
+| `-y` | no | usage, man |  | test_d_sam.py::test_copy_comment, test_d_paf.py::test_paf_copy_comment, test_d_api.py::test_writers_match_cli (its --paf-no-hit line: a minimap2 defect). |
 | `-Y` | no | usage, man |  | test_d_sam.py::test_soft_clipped_supplementary, test_d_api.py::test_long_cigar. |
 | `-o` | yes | usage, man |  | test_d_cli.py::test_output_file. |
 | `--seed` | yes | man | seeds the hash that breaks ties between equal hits | test_d_invariance.py::test_seed, test_d_api.py::test_mm_map_file_matches_cli (mm_mapopt_t.seed). |
@@ -667,7 +632,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `--print-aln-seq` | no | - | debug output to stderr; forces -t 1 | partial: test_d_cli.py::test_debug_options (output unchanged); what it prints is debug output and is not checked |
 | `--secondary` | yes | man |  | test_d_sam.py::test_secondary_no_and_n0 (yes, no, invalid value). |
 | `--cs` | optional | usage, man |  | test_d_sam.py::test_cs_md, test_d_sam.py::test_cs_variants_and_deprecated_s, test_d_sam.py::test_tags_at_read_ends, test_d_paf.py::test_paf_cs_md, test_d_api.py::test_mm_map_matches_cli. |
-| `--MD` | no | usage, man |  | test_d_sam.py::test_cs_md, test_d_sam.py::test_tags_at_read_ends, test_d_paf.py::test_paf_cs_md (with -c; a defect of base minimap2), test_d_api.py::test_mm_map_matches_cli. |
+| `--MD` | no | usage, man |  | test_d_sam.py::test_cs_md, test_d_sam.py::test_tags_at_read_ends, test_d_paf.py::test_paf_cs_md (with -c; a minimap2 defect), test_d_api.py::test_mm_map_matches_cli. |
 | `--lj-min-ratio` | yes | - | deprecated; prints a warning and is ignored | test_d_cli.py::test_deprecated_lj_min_ratio. |
 | `--eqx` | no | usage, man |  | test_d_sam.py::test_eqx, test_d_sam.py::test_tags_at_read_ends. |
 | `--paf-no-hit` | no | man |  | test_d_paf.py::test_paf_no_hit. |
@@ -791,7 +756,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | misc.c | `mm_err_fread` |  | test_d_api.py::test_misc (round trip); their error branches are not reachable on a regular file. |
 | kthread.c | `kt_for` |  | test_d_api.py::test_kthread; also every multi-threaded test. |
 | kthread.c | `kt_pipeline` |  | test_d_api.py::test_kthread; also every multi-threaded test. |
-| kalloc.c | `km_init2` | kalloc internals are not pinned (speed work may change them) | test_d_api.py::test_kalloc (contents, alignment, zeroing, NULL pool; km_stat only as capacity >= live bytes, no internals). |
+| kalloc.c | `km_init2` | kalloc internals are not pinned (a change to kalloc.c may alter them) | test_d_api.py::test_kalloc (contents, alignment, zeroing, NULL pool; km_stat only as capacity >= live bytes, no internals). |
 | kalloc.c | `km_init` |  | test_d_api.py::test_kalloc (contents, alignment, zeroing, NULL pool; km_stat only as capacity >= live bytes, no internals). |
 | kalloc.c | `km_destroy` |  | test_d_api.py::test_kalloc (contents, alignment, zeroing, NULL pool; km_stat only as capacity >= live bytes, no internals). |
 | kalloc.c | `kfree` |  | test_d_api.py::test_kalloc (contents, alignment, zeroing, NULL pool; km_stat only as capacity >= live bytes, no internals). |
@@ -824,28 +789,28 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | option errors from mm_check_opt (each returns 1 with a message) |  | test_d_cli.py::test_option_check_errors (33 cases), test_d_cli.py::test_option_check_boundaries (24), test_d_api.py::test_check_opt. |
 | libminimap2 used as example.c does (C drivers) |  | test_d_api.py::test_mm_map_matches_cli, test_d_api.py::test_minimap2_lite. |
 
-## Area E
+## E: mappy and misc/
 
 ### E: Programs and scripts (34)
 
 | Target | Notes | Tested |
 |:--|:--|:--|
 | `paftools.js view` |  | test_e_paftools.py::test_view_blast_like, test_e_paftools.py::test_view_line_length (-l 10, -l 5), test_e_paftools.py::test_view_lastz_cigar_and_maf, test_e_paftools.py::test_subcommand_usage[view]; needs k8 |
-| `paftools.js sam2paf` |  | test_e_paftools.py::test_sam2paf (-p -P -U -L, MD->cs, =/X, clips, /1), pilot test_pilot.py::test_paftools_sam2paf_agrees_with_paf_output; needs k8 |
+| `paftools.js sam2paf` |  | test_e_paftools.py::test_sam2paf (-p -P -U -L, MD->cs, =/X, clips, /1), test_pilot.py::test_paftools_sam2paf_agrees_with_paf_output; needs k8 |
 | `paftools.js delta2paf` |  | test_e_paftools.py::test_delta2paf (both strands, a run of 1s as one gap); needs k8 |
 | `paftools.js splice2bed` |  | test_e_paftools.py::test_splice2bed (PAF and SAM, -m, colours); `-n` not tested (uses k8 0.x `Map.put`, a TypeError under k8 1.x); needs k8 |
 | `paftools.js gff2bed` |  | test_e_paftools.py::test_gff2bed (GTF, GFF3, -s -j -e -G); `-u`/`-g` not tested; needs k8 |
 | `paftools.js gff2junc` |  | test_e_paftools.py::test_gff2junc (-f, unsorted records); needs k8 |
 | `paftools.js stat` |  | test_e_paftools.py::test_stat_paf (-l -c, every gap-length bin boundary), test_e_paftools.py::test_stat_sam (supplementary of a reverse-strand read); needs k8 |
 | `paftools.js asmstat` |  | test_e_paftools.py::test_asmstat (-l, two assemblies, gzip); needs k8 |
-| `paftools.js asmgene` |  | test_e_paftools.py::test_asmgene (-c -i -e); `-a` not tested; coverage of disjoint partial copies and the string comparison of positions noted in known-bugs/e-paftools-from-source.md; needs k8 |
+| `paftools.js asmgene` |  | test_e_paftools.py::test_asmgene (-c -i -e); `-a` not tested; not asserted: the coverage of disjoint partial copies (later blocks are miscounted) and gene positions compared as strings; needs k8 |
 | `paftools.js misjoin` |  | test_e_paftools.py::test_misjoin (-l -g -c -e, reverse-strand blocks, inversion at the contig end); needs k8 |
 | `paftools.js liftover` |  | test_e_paftools.py::test_liftover[liftover] (-l -q -d at the divergence boundary, stdin, _t5, a base inside an insertion); needs k8 |
 | `paftools.js liftOver` | alias of liftover | test_e_paftools.py::test_liftover[liftOver]; needs k8 |
 | `paftools.js vcfpair` |  | test_e_paftools.py::test_vcfpair (-m -g -s); needs k8 |
-| `paftools.js call` |  | test_e_paftools.py::test_call (-l and -L apart, reverse-strand indels), test_e_paftools.py::test_call_vcf (-f -s); QSTRAND of `-f` is wrong for a reverse-strand contig followed by another alignment (known-bugs/e-paftools-from-source.md), not asserted; needs k8 |
+| `paftools.js call` |  | test_e_paftools.py::test_call (-l and -L apart, reverse-strand indels), test_e_paftools.py::test_call_vcf (-f -s); QSTRAND of `-f` is wrong for a reverse-strand contig followed by another alignment, not asserted; needs k8 |
 | `paftools.js mapeval` |  | test_e_paftools.py::test_mapeval_paf (-r -Q), test_e_paftools.py::test_mapeval_sam_pairs_and_modes (-m 0/1/2, U line); needs k8 |
-| `paftools.js pafcmp` |  | test_e_paftools.py::test_pafcmp (-q, overlap ratio); the "additional test alignments" count always prints 0 (known-bugs/e-paftools-from-source.md) and is not asserted; needs k8 |
+| `paftools.js pafcmp` |  | test_e_paftools.py::test_pafcmp (-q, overlap ratio); the "additional test alignments" count always prints 0 and is not asserted; needs k8 |
 | `paftools.js bedcov` |  | test_e_paftools.py::test_bedcov (-p -e, BED12); `-d` not tested (calls `Interval.dedup`, which does not exist); needs k8 |
 | `paftools.js mason2fq` |  | test_e_paftools.py::test_mason2fq; needs k8 |
 | `paftools.js sim2bed` |  | test_e_paftools.py::test_sim2bed; needs k8 |
@@ -884,13 +849,13 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `Aligner(fn_idx_out=)` |  | test_e_mappy.py::test_index_file_matches_the_command_line, test_e_mappy.py::test_preset_index_parameters, test_e_mappy.py::test_k_and_w_arguments, test_e_mappy.py::test_seq_argument_builds_a_one_sequence_index (no effect with seq=) |
 | `Aligner(max_frag_len=)` |  | test_e_mappy.py::test_max_frag_len_pairs_a_repetitive_mate |
 | `Aligner(extra_flags=)` |  | test_e_mappy.py::test_extra_flags_strand_and_eqx, test_e_mappy.py::test_bw_long_and_long_join (MM_F_NO_LJOIN) |
-| `Aligner(seq=)` |  | test_e_mappy.py::test_seq_argument_builds_a_one_sequence_index (Aligner.seq() on it not tested: a defect of base minimap2); test_e_mappy.py::test_seq_argument_keeps_the_preset_hpc |
+| `Aligner(seq=)` |  | test_e_mappy.py::test_seq_argument_builds_a_one_sequence_index (Aligner.seq() on it not tested: a minimap2 defect); test_e_mappy.py::test_seq_argument_keeps_the_preset_hpc |
 | `Aligner(scoring=)` |  | test_e_mappy.py::test_scoring_and_sc_ambi_decide_end_extension[*] (4, 6 and 7 elements) |
 | `Aligner(sc_ambi=)` |  | same |
 | `Aligner(max_chain_skip=)` |  | test_e_mappy.py::test_max_chain_skip |
 | `Aligner.__bool__` | False when the index failed to load/build | test_e_mappy.py::test_missing_index_is_false, test_e_mappy.py::test_aligner_from_fasta |
 | `Aligner.map(seq=)` |  | most tests |
-| `Aligner.map(seq2=)` |  | test_e_mappy.py::test_pairs_seq2_and_read_num, test_e_mappy.py::test_max_frag_len_pairs_a_repetitive_mate, test_e_mappy.py::test_thread_buffer_reuse (mate 2 query interval/cs only when full length: a defect of base minimap2); odd-length mates in test_e_mappy.py::test_pairs_seq2_and_read_num |
+| `Aligner.map(seq2=)` |  | test_e_mappy.py::test_pairs_seq2_and_read_num, test_e_mappy.py::test_max_frag_len_pairs_a_repetitive_mate, test_e_mappy.py::test_thread_buffer_reuse (mate 2 query interval/cs only when full length: a minimap2 defect); odd-length mates in test_e_mappy.py::test_pairs_seq2_and_read_num |
 | `Aligner.map(name=)` |  | test_e_mappy.py::test_name_seeds_the_tie_breaking_hash |
 | `Aligner.map(buf=)` |  | test_e_mappy.py::test_thread_buffer_reuse |
 | `Aligner.map(cs=)` |  | test_e_mappy.py::test_cs_md_and_ds, test_e_mappy.py::test_cs_md_ds_match_the_command_line, test_e_mappy.py::test_pairs_seq2_and_read_num |
@@ -929,7 +894,7 @@ Defined without `static` (prototypes in mmpriv.h, bseq.h, sdust.h, ksw2.h, kallo
 | `verbose(v=None)` | get/set mm_verbose | test_e_mappy.py::test_verbose_get_and_set |
 | `python/minimap2.py -x` |  | test_e_minimap2_py.py::test_preset_k_w_and_tags, test_e_minimap2_py.py::test_band_width |
 | `python/minimap2.py -n` |  | test_e_minimap2_py.py::test_min_count, test_e_minimap2_py.py::test_k_and_w_set_the_seed_density |
-| `python/minimap2.py -m` | known issue: -m is parsed but not passed on | not covered: parsed but never passed to mappy (a defect of base minimap2) |
+| `python/minimap2.py -m` | known issue: -m is parsed but not passed on | not covered: parsed but never passed to mappy (a minimap2 defect) |
 | `python/minimap2.py -r` |  | test_e_minimap2_py.py::test_band_width |
 | `python/minimap2.py -k` |  | test_e_minimap2_py.py::test_k_and_w_set_the_seed_density, test_e_minimap2_py.py::test_preset_k_w_and_tags |
 | `python/minimap2.py -w` |  | test_e_minimap2_py.py::test_k_and_w_set_the_seed_density, test_e_minimap2_py.py::test_preset_k_w_and_tags |

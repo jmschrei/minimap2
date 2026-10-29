@@ -1,4 +1,4 @@
-"""Area B: the mapping parameters of the long-read and assembly presets (-x lr map-ont ava-ont map10k
+"""The mapping parameters of the long-read and assembly presets (-x lr map-ont ava-ont map10k
 map-pb ava-pb lr:hq map-hifi map-ccs lr:hqae map-iclr-prerender map-iclr asm5 asm10 asm20).
 
 Each preset must equal the options minimap2.1 lists for it (lr:hqae and map-iclr-prerender, which
@@ -147,7 +147,7 @@ PINS = [
 @pytest.mark.pinned
 @pytest.mark.parametrize("name,preset,reads,extra", PINS, ids=[p[0] for p in PINS])
 def test_preset_output_pinned(synth, sim, name, preset, reads, extra):
-	"""Pins the current output of base minimap2 for each preset on the simulated reads (@PG removed)."""
+	"""Pins the current output of minimap2 for each preset on the simulated reads (@PG removed)."""
 	fa, _ = sim[reads]
 	H.check_pinned("b/" + name, H.strip_pg(H.map_reads(synth.fasta, fa, extra, preset=preset).stdout))
 
@@ -155,14 +155,14 @@ def test_preset_output_pinned(synth, sim, name, preset, reads, extra):
 @pytest.mark.pinned
 @pytest.mark.parametrize("preset", ["ava-ont", "ava-pb"])
 def test_ava_output_pinned(sim, preset):
-	"""Pins the current all-vs-all output of base minimap2 (reads against themselves)."""
+	"""Pins the current all-vs-all output of minimap2 (reads against themselves)."""
 	fa, _ = sim[READS[preset]]
 	H.check_pinned("b/%s.paf.gz" % preset, H.map_reads(fa, fa, [], preset=preset).stdout)
 
 
 @pytest.mark.pinned
 def test_short_clr_map_pb_pinned(synth, tmp_path):
-	"""Pins the current output of base minimap2 for 30 short CLR-like reads (indels up to 4 bp) with
+	"""Pins the current output of minimap2 for 30 short CLR-like reads (indels up to 4 bp) with
 	-x map-pb -c: homopolymer-compressed seeds and indel-dense alignments (CIGAR clean-up after
 	shifting indels left)."""
 	reads = H.simulate_long_reads(synth.genome, 30, profile="clr", seed=77, length=(500, 1500), max_indel=4)
@@ -172,7 +172,7 @@ def test_short_clr_map_pb_pinned(synth, tmp_path):
 
 @pytest.mark.pinned
 def test_str_rich_genome_pinned(tmp_path):
-	"""Pins the current output of base minimap2 (-c) for 30 ONT-like reads on a 50 kbp genome with 40
+	"""Pins the current output of minimap2 (-c) for 30 ONT-like reads on a 50 kbp genome with 40
 	short tandem repeats (units of 2-12 bp, 20-60 copies), where consecutive identical minimizers are
 	flagged as tandem seeds."""
 	rng = H.Rng(5)

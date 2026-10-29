@@ -1,4 +1,4 @@
-"""Area B: seeding (seed.c), the minimizer occurrence threshold (-f, -U, --min-occ-floor, -e,
+"""Seeding (seed.c), the minimizer occurrence threshold (-f, -U, --min-occ-floor, -e,
 --q-occ-frac; mm_idx_cal_max_occ, mm_mapopt_update) and ALT contigs (--alt; mm_idx_alt_read).
 
 Expected values come from brute-force minimizers (helpers_b.minimizers, minimap2's documented

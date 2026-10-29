@@ -1,4 +1,4 @@
-"""Area B: the mapping parameters and results of the libminimap2 API (minimap.h): mm_map with the
+"""The mapping parameters and results of the libminimap2 API (minimap.h): mm_map with the
 mm_mapopt_t fields and MM_F_* flags set directly (tests/c/drv_b_api.c) must give what the command
 line gives for the corresponding options, field for field of mm_reg1_t and mm_extra_t against the
 PAF columns and tags; mm_set_opt sets each preset's mode flags; and the fields without an option

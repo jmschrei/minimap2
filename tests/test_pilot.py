@@ -1,4 +1,4 @@
-"""Pilot tests: the README's MT-human/MT-orang example, simulated ONT-like,
+"""Whole-program checks: the README's MT-human/MT-orang example, simulated ONT-like,
 HiFi-like, spliced and paired-end reads against their truth, one
 libminimap2 API case through a C driver, one mappy case and one
 paftools.js case."""

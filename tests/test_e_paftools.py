@@ -1,4 +1,4 @@
-"""misc/paftools.js, every subcommand, on small hand-made inputs (area E).
+"""misc/paftools.js, every subcommand, on small hand-made inputs.
 
 Each input is a few lines built so that the expected output can be worked out
 by hand from what the subcommand is documented to do (misc/README.md, the

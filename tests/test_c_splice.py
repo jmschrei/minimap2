@@ -1,4 +1,4 @@
-"""Area C: long-read spliced alignment. The splice presets and their aliases,
+"""Long-read spliced alignment. The splice presets and their aliases,
 `--splice`, `-u`, `-G`, `-C`, `-J`, `--splice-flank`, annotated junctions
 (`--junc-bed`, `--junc-bonus`, mm_idx_bed_read/mm_idx_bed_junc) and splice
 scores (`--spsc`, `--spsc-scale`, `--spsc0`/`--junc-pen`, mm_idx_spsc_*).
@@ -66,7 +66,7 @@ def test_u_option_chooses_strand(synth_tx, hifi_tx):
 	"""-u: f = transcript strand only, r = the reverse, b = both (README: two rounds of alignment,
 	keeping the better one and writing it to ts). On HiFi-like spliced reads:
 	-uf writes ts:A:+ and -ur ts:A:- on every spliced alignment (whether unspliced ones carry it is
-	left open: cookbook.md calls the tag spliced-only, base writes it on them too); a read on the
+	left open: cookbook.md calls the tag spliced-only, minimap2 writes it on them too); a read on the
 	assumed strand gets the same CIGAR and AS as with -ub, where ts:A gives its true orientation; a
 	spliced read on the other strand scores lower, because its GT-AG signals are not matched."""
 	reads, fq = hifi_tx["truth"], hifi_tx["fq"]
@@ -257,7 +257,7 @@ def test_splice_flank_under_J0(tmp_path):
 	only intron A has both conserved flanking bases, in locus B only intron B. With the default
 	--splice-flank=yes, -J0 and -J1 both take the flanked intron. With -J0 --splice-flank=no the
 	flanks are ignored, so loci A and B score like the fully flanked tie locus and take the intron
-	it takes. (Under the default -J1, --splice-flank=no has no effect; see known-bugs.)"""
+	it takes. (Under the default -J1, --splice-flank=no has no effect, which is not tested.)"""
 	locs = {}
 	for name, fa_, fb in (("A", True, False), ("B", False, True), ("tie", True, True)):
 		loc = C.tie_locus(212, flank_a=fa_, flank_b=fb)

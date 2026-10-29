@@ -1,4 +1,4 @@
-/* Area A driver: the sequence reader of bseq.c (internal API, bseq.h).
+/* C driver: the sequence reader of bseq.c (internal API, bseq.h).
  *
  * Each case writes the records it reads, one line per record with the batch
  * it came in, so pytest can compare them with what it wrote:

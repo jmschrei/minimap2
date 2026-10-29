@@ -1,4 +1,4 @@
-"""Area B: a moderately large case, mapped with one thread and with eight.
+"""A moderately large case, mapped with one thread and with eight.
 
 helpers_b.large_genome() is 1.5 Mbp with segmental duplications, inverted repeats, low-complexity
 tracts, N runs and a 150-copy family whose minimizers exceed the default occurrence threshold, so

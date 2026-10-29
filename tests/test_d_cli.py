@@ -100,8 +100,8 @@ def test_unknown_preset(small, preset):
 def test_unknown_option_and_missing_argument(small, args, named):
 	"""An unknown option, or an option missing its argument, is an error: exit 1 and a message
 	before anything is read, before or after the file arguments. When the unknown option comes
-	first the message names it (after the files it names another argument:
-	known-bugs/d-unknown-option-message.md)."""
+	first the message names it (after the files it names a file instead, which is not
+	tested)."""
 	fa, fq, _ = small
 	for argv in ((args + [fa, fq], [fa, fq] + args) if named else ([fa, fq] + args,)):
 		r = H.run_mm2(argv)

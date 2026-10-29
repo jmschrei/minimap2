@@ -1,4 +1,4 @@
-"""Area C: short RNA-seq reads (`-x splice:sr`), junction jumps (`-j`, `--pass1`,
+"""Short RNA-seq reads (`-x splice:sr`), junction jumps (`-j`, `--pass1`,
 `--jump-min-match`, mm_jump_split in jump.c, mm_idx_jjump_read and
 mm_idx_jump_get in index.c) and the two-pass workflow of README.md.
 
@@ -125,7 +125,7 @@ def test_jump_with_a_mismatch_near_the_junction(tx):
 	both orientations) with one substitution 2 bases from the junction on the long side: every read
 	is still extended across its annotated intron, and NM, the CIGAR's span and cs:Z (the substitution
 	and the intron) agree with the genome. (A substitution 4 bases from the junction can be counted
-	twice in NM: base behaviour; see Rules.)"""
+	twice in NM, a defect that is not tested.)"""
 	other = {"A": "C", "C": "A", "G": "T", "T": "G"}
 	reads, truth = [], {}
 	for n, seq, t in C.overhang_reads(tx["genome"], tx["genome"].genes, overhangs=(8, 12)):
@@ -229,7 +229,7 @@ def test_jump_prefers_annotation_over_pass1(alt):
 	"""minimap2.1: when both -j and --pass1 are present, junctions in -j are preferred over those in
 	--pass1 when there is ambiguity. A read whose last 6 or 10 bases match the start of two alternative
 	3' exons is extended to the junction given by -j, whichever of the two that is; with one file
-	alone, to the single junction it lists. Also records base behaviour: with both junctions in the
+	alone, to the single junction it lists. Also records the current behaviour: with both junctions in the
 	same file the read is not extended at all."""
 	ja, jb = alt["loc"].ja, alt["loc"].jb
 	A, B = alt["bed"]("a.bed", [ja]), alt["bed"]("b.bed", [jb])

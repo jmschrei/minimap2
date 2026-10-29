@@ -1,4 +1,4 @@
-"""Area A: index building and the .mmi format (index.c, options.c's index
+"""Index building and the .mmi format (index.c, options.c's index
 parameters, main.c's -k -w -H -I -d --idx-no-seq --bucket-bits).
 
 The .mmi files minimap2 writes are decoded by helpers_a.read_mmi (the layout
@@ -298,7 +298,7 @@ def parted(tmp_path_factory):
 def test_multi_part_index_file(parted, tmp_path, batch):
 	"""-I NUM with -d writes one index per part back to back in the .mmi: parts are consecutive runs of
 	the target sequences, each ending with the sequence that brings it to NUM bases or more (minimap2.1:
-	"Load at most NUM target bases"; see known-bugs/a-index-batch-size.md); each part holds the reference
+	"Load at most NUM target bases", but a part can hold up to about twice NUM); each part holds the reference
 	minimizers of its own sequences with rid counted within the part."""
 	num = int(batch[:-1]) * 1000 if batch.endswith("k") else int(batch)
 	mmi = _dump(parted.fasta, tmp_path / "mp.mmi", ["-I", batch])

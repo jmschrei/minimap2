@@ -1,4 +1,4 @@
-/* Area C driver: the splice and short-read parts of the libminimap2 API.
+/* C driver: the splice and short-read parts of the libminimap2 API.
  *
  * preset_fields   option values the splice and short-read presets set,
  *                 against minimap2.1; MM_MAX_SEG; mm_max_spsc_bonus()
@@ -6,8 +6,7 @@
  * bed_junc        mm_idx_bed_read() and mm_idx_bed_junc() on a BED file
  * spsc            mm_idx_spsc_read(), mm_idx_spsc_read2() and mm_idx_spsc_get()
  * jump_get        mm_idx_jjump_read() and mm_idx_jump_get() (mmpriv.h; reads
- *                 the off/off2/flag fields of mm_idx_jjump1_t, which a speed
- *                 change may rearrange but not rename)
+ *                 the off/off2/flag fields of mm_idx_jjump1_t by name)
  * map_splice      mm_map() in splice mode: is_spliced, trans_strand, introns
  * map_frag        mm_map_frag() on read pairs: proper_frag, seg_split, seg_id,
  *                 pe_thru; one segment equals mm_map(); MM_MAX_SEG + 1 segments

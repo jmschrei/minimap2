@@ -4,8 +4,7 @@ Unit and end-to-end tests of minimap2: reading sequences, sketching and
 index building, seeding, chaining, alignment, splice and paired-end
 mapping, SAM/PAF output, every command-line option and preset, the
 libminimap2 API in `minimap.h`, the mappy Python binding and the `misc/`
-scripts. `TARGETS.md` lists every target, grouped by area, and which test
-covers it.
+scripts. `TARGETS.md` lists every target and the test that covers it.
 
 ## Running
 
@@ -59,7 +58,7 @@ PATH=$PWD/k8-1.2:$PATH python3 -m pytest tests      # after copying k8-x86_64-Li
 
 Each input is a few hand-made lines whose expected output was worked out
 by hand from the usage text, misc/README.md, the file formats and the
-script. Two defects of base paftools.js are left unasserted: `pafcmp`
+script. Two defects of paftools.js are left unasserted: `pafcmp`
 always reports 0 additional test alignments, and `call -f` can write the
 wrong QSTRAND for a reverse-strand contig.
 
@@ -89,7 +88,7 @@ CC=$E/bin/clang CPATH=$E/include LIBRARY_PATH=$E/lib LD_LIBRARY_PATH=$E/lib \
 | `MINIMAP2_TEST_CACHE_DIR` | `$XDG_CACHE_HOME/minimap2-tests` or `~/.cache/minimap2-tests` | build cache |
 | `MINIMAP2_TEST_THREADS` | 1 | `-t` for tests that do not set it themselves |
 | `MINIMAP2_TEST_TIMEOUT` | 120 | seconds before one child process is killed |
-| `MINIMAP2_TEST_UPDATE_PINS` | unset | `1` rewrites pinned outputs (only on base minimap2) |
+| `MINIMAP2_TEST_UPDATE_PINS` | unset | `1` rewrites pinned outputs (only when a change of output is intended) |
 | `MMT_VERBOSE` | unset | C drivers also print passing checks |
 
 `MINIMAP2_BIN` replaces only the `minimap2` binary. `sdust`,
@@ -110,19 +109,19 @@ do.
 
 | File | Contents |
 |:-----|:---------|
-| `TARGETS.md` | every target, grouped by area, with a Tested column |
+| `TARGETS.md` | every target, grouped in parts A to E, and the tests that cover it |
 | `minimap2_build.py` | locate or build the binary, `libminimap2.a`, `make extra`, C drivers and mappy out of tree |
 | `minimap2_helpers.py` | genome and read simulation, FASTA/FASTQ and annotation I/O, running minimap2, SAM/PAF parsers, tag recomputation, invariant checks, pins, C driver, k8 and minimap2.py runners |
 | `conftest.py` | session fixtures |
 | `pytest.ini` | test paths, `-ra --strict-markers`, the markers |
 | `c/minimap2_test.h` | check-and-report framework for C drivers |
 | `c/drv_*.c` | C drivers, one binary each, compiled on demand |
-| `pins/<area>/` | pinned outputs |
+| `pins/<a-e>/` | pinned outputs, by part |
 | `test_harness.py` | tests of the harness itself |
 | `test_pilot.py` | whole-program sanity checks, one API, one mappy and one paftools case |
-| `test_<area>_*.py`, `helpers_<area>.py` | tests and helpers per area of `TARGETS.md` (a to e) |
+| `test_<a-e>_*.py`, `helpers_<a-e>.py` | tests and helpers by part: a, input, sketching and index; b, seeding, chaining, alignment and hit selection; c, splice and short reads; d, output, the command line and the API; e, mappy and the `misc/` scripts |
 
-Markers (`pytest.ini`): `pinned` (pins base output), `external`
+Markers (`pytest.ini`): `pinned` (pins the current output), `external`
 (samtools/pysam), `thread_invariance`, `mappy`, `k8`.
 
 ## Fixtures (conftest.py)
@@ -219,12 +218,12 @@ lengths minimizers seq4`) for the `.mmi` format.
 
 Pins: `check_pinned(name, text)` compares with `pins/<name>` (gzip when the
 name ends in `.gz`) and shows a diff; `strip_pg(sam)` drops the `@PG` line
-and `sam_body(sam)` all header lines. Area writers put pins under
-`pins/<area>/`.
+and `sam_body(sam)` all header lines. Each part keeps its pins under
+`pins/<a-e>/`.
 
 ## Adding a C driver
 
-1. Create `c/drv_<area>_<topic>.c` that includes `minimap2_test.h` and any of
+1. Create `c/drv_<a-e>_<topic>.c` that includes `minimap2_test.h` and any of
    minimap2's headers (`minimap.h`, or internal ones such as `mmpriv.h`,
    `bseq.h`, `ksw2.h`, `sdust.h`, `kalloc.h`, `kthread.h`); the include path
    holds the copied source tree.
@@ -248,8 +247,8 @@ as arguments from Python. `mmt_read_seqs()` reads a small plain FASTA/FASTQ
 file. Match minimap2's C style (tabs, C99, K&R braces). `drv_pilot` uses
 only `minimap.h`. A driver that builds or reads internal structs
 (`mm128_t` arrays for chaining, `ksw_extz_t`, `mm_reg1_t` by hand) should
-say so in its header comment, since a speed change may alter them; the
-public structs in `minimap.h` are fixed for the speed search.
+say so in its header comment, since a change to minimap2's internals may
+alter them.
 
 ## Rules for expected values
 
@@ -264,9 +263,13 @@ These bind every test in the suite.
   python/README.rst. A test that only records the current output says so in
   its docstring ("pins the current output") and carries the `pinned`
   marker; keep these few.
-* No test of behaviour base minimap2 gets wrong (behaviour that contradicts
-  its documentation or the SAM/PAF spec). Such behaviour is reported
-  separately, not tested.
+* No test asserts behaviour that contradicts minimap2's documentation or
+  the SAM/PAF specification; such behaviour is reported separately. Two
+  such cases are pinned instead of left out: the ksw2 kernels at a narrow
+  band (`test_b_ksw.py::test_narrow_band_edge`) and secondary alignments
+  below the `-p` ratio (`test_b_hit.py::test_secondaries_below_pri_ratio_pinned`).
+  A fix to either changes its pin, which `MINIMAP2_TEST_UPDATE_PINS=1`
+  rewrites.
 * No dependence on platform, compiler, Python version or thread count unless
   the test is explicitly about thread-count invariance (`thread_invariance`
   marker). minimap2 builds on Linux x86-64 (gcc, clang), Linux aarch64
@@ -274,18 +277,16 @@ These bind every test in the suite.
   not depend on SIMD width, `ru_maxrss` units, `/proc`, `sed -i` dialects or
   GNU-only tool options.
 * Each test file runs fast; the whole suite should stay under about two
-  minutes at `MINIMAP2_TEST_THREADS=4` on a loaded machine, since it runs
-  once per iteration of a speed search. A minimap2 process on these inputs
-  takes 10-50 ms; prefer one run checked many ways over many runs, and keep
+  minutes at `MINIMAP2_TEST_THREADS=4` on a loaded machine. A minimap2
+  process on these inputs takes 10-50 ms; prefer one run checked many ways over many runs, and keep
   simulated read counts in the tens to hundreds (the Python simulator costs
   about 2 ms per kbp of long reads).
-* Do not pin implementation details that a speed optimization could change
-  while keeping minimap2's output byte-identical: internal struct layouts
+* Do not pin implementation details that a change to minimap2's internals
+  could alter while keeping its output byte-identical: internal struct layouts
   outside `minimap.h`, allocation counts, kalloc statistics, the order of
   internal calls, stderr timing lines, debug output formats (`--print-*`).
   Pinning the bytes of `minimap2` SAM/PAF output on fixed inputs is fine
-  and wanted; so are `.mmi` bytes and libminimap2 API results, which the
-  speed search keeps fixed.
+  and wanted; so are `.mmi` bytes and libminimap2 API results.
 * Never compare stderr wholesale. For a warning or an error, check that a
   message appears (`Result.messages`) and, where it carries one, that it
   names the offending option or value; do not match its wording or its ANSI
@@ -293,21 +294,11 @@ These bind every test in the suite.
 
 ## Test data
 
-Synthetic by default. Small real subsets (a few hundred reads at most) may
-be added to `tests/data/` only from these sources, each with a NOTICE file
-beside it:
-
-* ENCODE and 4DN K562 data: a NOTICE citing ENCODE or 4DN and the ENCSR/ENCFF
-  or 4DN accessions.
-* NIST GIAB HG002 PacBio HiFi and ONT ultra-long (ONT-UL) reads: the NIST
-  notice and a note that the data were changed (subsetted), with the date.
-* GIAB HG002 HiSeq WGS short reads: NIST/GIAB attribution and a "subsetted"
-  notice.
-
-Never copy HG002 ONT Open Data reads (CC BY-NC 4.0); they may only be used
-for timing outside the repository. The files already in `test/` may be used
-as they are. The `__cpuidex` wrapper in `ksw2_dispatch.c` carries unknown
-terms: no test may depend on editing it.
+Inputs are simulated at test time from fixed seeds. The only files read
+from the repository are `test/MT-human.fa` and `test/MT-orang.fa`, and
+nothing is downloaded. Real data added later should be a small subset (a
+few hundred reads at most) under `tests/data/`, with a NOTICE file beside
+it giving its source, accessions and terms of use.
 
 ## Things to know about minimap2's output
 
@@ -339,7 +330,7 @@ terms: no test may depend on editing it.
   repeat to another copy; do not assert which copy a repetitive read lands
   on.
 * `--cs` together with `--MD` writes only MD:Z, and `--cs` with `--ds` only
-  ds:Z (base behaviour; see Rules). Run minimap2 twice when a test needs
+  ds:Z (a defect, not tested; see Rules). Run minimap2 twice when a test needs
   both.
 * MD:Z omits the final `0` when an alignment ends with a mismatch (`65T`
   instead of `65T0`; common with `-x sr`, whose end bonus extends alignments
@@ -357,13 +348,13 @@ terms: no test may depend on editing it.
   the simulated cDNA and RNA-seq reads every spliced alignment and no
   unspliced one carried it. `-uf` and `-ur` write `ts:A:+` and `ts:A:-` on
   every alignment, spliced or not, and `-un` (and `--splice` without `-u`)
-  write `ts:A:-` on every alignment (base behaviour; see Rules).
+  write `ts:A:-` on every alignment (a defect, not tested; see Rules).
 * Secondary alignments are written by default (up to `-N`, 5) with SEQ and
   QUAL `*` (`--secondary-seq`: the aligned part, hard-clipped);
   supplementary alignments are hard-clipped unless `-Y`; the primary of a
   split read lists the others in SA:Z with approximate CIGARs.
-* Secondary alignments may be written below the `-p` ratio (base
-  behaviour; see Rules): `mm_select_sub` keeps a secondary scoring within 2k
+* Secondary alignments may be written below the `-p` ratio (a defect,
+  pinned; see Rules): `mm_select_sub` keeps a secondary scoring within 2k
   of its primary and, on single-end reads, one on the other strand whose
   chaining score is above 0.8 times `-g` (with `-c`, only if its divergence is
   low); for read pairs `mm_select_sub_multi` keeps a secondary near its
@@ -371,20 +362,20 @@ terms: no test may depend on editing it.
   primary's score. Tests choose copies whose scores differ by more than 2k.
 * ksw2 at a narrow band: with a band `w` close to |qlen - tlen| the kernels
   can report a score above the banded optimum and a CIGAR that leaves the
-  band (base behaviour; see Rules); `test_b_ksw.py` pins those results
+  band (a defect; see Rules); `test_b_ksw.py` pins those results
   instead of asserting them.
 * Batch boundaries of the sequence reader (bseq.c) do not change the
   output; tests check only record order and that mates stay in one batch in
   fragment mode.
 * `-x sr` can leave one mate of a read-through pair (a fragment shorter
   than the reads, so both reads run into adapter) unmapped although it aligns
-  uniquely on its own (base behaviour; see Rules); the read-through pairs of
+  uniquely on its own (a defect, not tested; see Rules); the read-through pairs of
   `test_c_api.py` sit at fixed positions where both mates map.
 * With `-j`, a mismatch within a few bases of a junction that the jump
-  re-reads can be counted twice in NM:i (base behaviour; see Rules); the
+  re-reads can be counted twice in NM:i (a defect, not tested; see Rules); the
   `-j` tests place substitutions 2 bases from the junction.
 * Under `make asan=1` (`MINIMAP2_TEST_MAKE_ARGS=asan=1`) LeakSanitizer
-  reports small leaks at exit with `--spsc` and `-R` (base behaviour); set
+  reports small leaks at exit with `--spsc` and `-R`; set
   `ASAN_OPTIONS=detect_leaks=0` to check memory errors only.
 * Unmapped reads: a SAM line with flag 4 (not with `--sam-hit-only`); PAF
   leaves them out unless `--paf-no-hit`, which writes `name qlen 0 0 * * 0
@@ -403,12 +394,12 @@ terms: no test may depend on editing it.
   reads' names; PAF appends `/1` or `/2` to them, even to a name that already
   ends in `/1` (`p0/1/1`).
 * `mm_idx_name2id()` on an index from `mm_idx_str()` returns an unset value
-  (base behaviour; see Rules): look up names only on indexes read from a
+  (a defect, not tested; see Rules): look up names only on indexes read from a
   file, after `mm_idx_index_name()`.
 * mappy builds a single-part index, always computes CIGARs, returns
   secondary alignments too, and computes cs and MD independently of each
   other. `Alignment.__str__` writes `ts:A:.` when the strand is unknown.
-  `python/minimap2.py` ignores `-m` (base behaviour).
+  `python/minimap2.py` parses `-m` but does not pass it to mappy (not tested).
 
 ## Coverage
 
@@ -470,20 +461,3 @@ JSON reports. The harness compiles in a temporary directory that it then
 renames, so the `.gcda` files are written under the temporary path recorded
 at compile time: link that path to the build directory before the run, or
 move the files afterwards.
-
-## Local setup for the 2026-10-26 speed search
-
-Remove this section before the suite goes upstream.
-
-* k8 1.2: `/home/jmschrei/auto-optimization/2026-10-26-minimap2-speed/toolchains/k8/bin`
-  (put it on `PATH`).
-* clang 18.1.8: `E=/home/jmschrei/auto-optimization/2026-10-24-chromap-speed/toolchains/clang`
-  with `CC`, `CPATH`, `LIBRARY_PATH` and `LD_LIBRARY_PATH` as above.
-* gcc 11: `CC=gcc-11`. Python 3.8: `uv run --no-project --python 3.8 ...`.
-* The data rules above are the user's decisions on the license record in
-  `/home/jmschrei/auto-optimization/2026-10-26-minimap2-speed/TERMS.md`
-  (with `USAGE.md` beside it); the NOTICE texts are in
-  `/home/jmschrei/auto-optimization/2026-10-24-minibwa-speed/TERMS.md`.
-* Behaviour of base minimap2 that contradicts its documentation is filed in
-  `/home/jmschrei/auto-optimization/2026-10-26-minimap2-speed/known-bugs/`,
-  not tested.

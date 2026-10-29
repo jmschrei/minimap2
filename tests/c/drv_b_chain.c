@@ -1,4 +1,4 @@
-/* Area B driver: chaining (lchain.c) and the sorting helpers of misc.c.
+/* C driver: chaining (lchain.c) and the sorting helpers of misc.c.
  *
  * Builds anchor arrays (mm128_t, the layout mmpriv.h documents for
  * mg_lchain_dp/mg_lchain_rmq) by hand and checks the chains against the
@@ -12,7 +12,7 @@
  *
  * Anchor layout: x = strand<<63 | contig<<32 | target end position,
  * y = span<<32 | query end position. Internal function signatures from
- * mmpriv.h; a speed change that alters them breaks this driver, not the
+ * mmpriv.h; a change to them breaks this driver, not the
  * documented behaviour it checks. */
 
 #include <stdlib.h>

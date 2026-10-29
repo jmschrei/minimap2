@@ -1,4 +1,4 @@
-"""Helpers for area E: the mappy binding, python/minimap2.py and the misc/ scripts.
+"""Helpers for the tests of the mappy binding, python/minimap2.py and the misc/ scripts (test_e_*.py).
 
 hit_key / paf_key       one tuple per alignment, comparable between a mappy Alignment and a PAF line
 cli_hits                minimap2 -c --secondary=yes on a read file -> {qname: [paf_key, ...]}

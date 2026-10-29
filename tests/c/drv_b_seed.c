@@ -1,4 +1,4 @@
-/* Area B driver: seeding (seed.c), the occurrence threshold (mm_idx_cal_max_occ,
+/* C driver: seeding (seed.c), the occurrence threshold (mm_idx_cal_max_occ,
  * mm_mapopt_update) and ALT contigs (mm_idx_alt_read).
  *
  * Expected values come from the Python side (tests/helpers_b.py), which

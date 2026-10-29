@@ -1,10 +1,10 @@
-"""python/minimap2.py, the example command-line wrapper around mappy (area E).
+"""python/minimap2.py, the example command-line wrapper around mappy.
 
 It prints `name  qlen  str(Alignment)` per alignment: the first twelve
 columns are PAF's, so they are compared with `minimap2 -c --no-hash-name
 --secondary=yes` (minimap2.py does not pass read names to map()), and every
 option is compared with the minimap2 option it stands for. `-m` is parsed but
-never reaches mappy (known-bugs/minimap2-py-m-ignored.md) and is not tested.
+never reaches mappy, so it is not tested.
 """
 
 import pytest

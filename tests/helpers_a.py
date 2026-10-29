@@ -1,4 +1,4 @@
-"""Helpers for the area A tests (input, sketching, index).
+"""Helpers for the input, sketching and index tests (test_a_*.py).
 
 Standard library only.
 
@@ -17,8 +17,8 @@ import collections
 import minimap2_helpers as H
 
 # ---------------------------------------------------------------------------
-# Minimizers and .mmi files: the shared reference in minimap2_helpers, under the names the area A
-# tests use
+# Minimizers and .mmi files: the shared reference in minimap2_helpers, under the names the
+# test_a_*.py tests use
 # ---------------------------------------------------------------------------
 
 _NT4 = H._SKETCH_NT4  # sketch.c's seq_nt4_table: A/C/G/T/U in either case -> 0..3, anything else -> 4

@@ -1,4 +1,4 @@
-"""misc/pafcluster.js: greedy clustering of sequences from all-vs-all PAF (area E).
+"""misc/pafcluster.js: greedy clustering of sequences from all-vs-all PAF.
 
 Five sequences: A-B identical over their whole length, A-C covering 95% of A
 at 0.2% divergence, A-D covering 98% of A at 3% divergence, C-E a short

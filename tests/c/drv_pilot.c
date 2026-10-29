@@ -1,4 +1,4 @@
-/* Pilot C driver: the libminimap2 API used the way example.c (minimap2-lite)
+/* C driver for test_pilot.py: the libminimap2 API used the way example.c (minimap2-lite)
  * uses it. map_truth maps simulated reads with mm_map() and checks each
  * read's primary hit against the simulator's truth, and name lookup on the
  * loaded index; idx_str builds an index from strings with mm_idx_str() and

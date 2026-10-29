@@ -1,4 +1,4 @@
-"""Area C: short genomic reads and pairing. Paired input from two files or one
+"""Short genomic reads and pairing. Paired input from two files or one
 interleaved file with or without /1 /2 suffixes (README), the fragment mode
 (`--frag`, reads with the same name in one file, more than two segments),
 `-F`, `--pairing`, `--no-pairing`, `--sr`, the `sr` preset and its alias
@@ -230,8 +230,8 @@ def test_unmapped_and_split_mates(synth, tmp_path):
 def test_three_segment_fragments(synth, tmp_path):
 	"""Three query files with --frag=yes make three-segment templates (FI:i, SAMtags); here each
 	template is three reads of one strand in fragment order. Per the SAM
-	spec: 0x40 alone on the first segment and 0x80 alone on the last (the middle segment's bits are
-	known-bugs/d-middle-segment-flags.md); RNEXT/PNEXT and 0x20 give the next segment's primary, and
+	spec: 0x40 alone on the first segment and 0x80 alone on the last (minimap2 sets neither bit on the
+	middle segment, which is not checked); RNEXT/PNEXT and 0x20 give the next segment's primary, and
 	the next of the last is the first; TLEN is measured to that next segment. PAF names the segments
 	/1, /2, /3."""
 	g = synth.genome
@@ -365,7 +365,7 @@ def test_splice_sr_single_end_equals_its_definition(synth_tx, tmp_path):
 def test_sr_pairs_pinned(synth, tmp_path):
 	"""Pins the current output: `-ax sr --cs` (README) on 150 simulated pairs with indels from the
 	whole standard genome, repeats and N runs included, SAM without @PG, byte for byte. (No --MD:
-	its final 0 is known-bugs/md-trailing-zero.md.)"""
+	minimap2 omits its final 0 after a mismatch.)"""
 	pairs = H.simulate_pairs(synth.genome, 150, seed=112, insert_mean=350, insert_sd=60, qual=None, n_rate=0.002)
 	f1, f2 = H.write_pairs(str(tmp_path / "r1.fa"), str(tmp_path / "r2.fa"), pairs)
 	res = H.map_reads(synth.fasta, [f1, f2], ["-a", "--cs"], preset="sr")

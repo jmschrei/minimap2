@@ -1,4 +1,4 @@
-"""Area A: minimizer sketching (sketch.c, mm_sketch).
+"""Minimizer sketching (sketch.c, mm_sketch).
 
 mm_sketch() runs through tests/c/drv_a_sketch.c and its output is compared
 with helpers_a.SketchRef, a brute-force scan written from minimap2.1 ("a
@@ -7,8 +7,8 @@ hash in sketch.c, -H's definition (a k-mer of the homopolymer-compressed
 sequence) and the layout documented above mm_sketch() (x = hash<<8 | span,
 y = rid<<32 | lastPos<<1 | strand).
 
-Two edge behaviours of base minimap2 are filed in known-bugs/a-sketch-window-
-edges.md and kept out of the exact comparisons: in the first window of a
+Two edge behaviours of minimap2 that contradict this definition are kept out
+of the exact comparisons: in the first window of a
 run, a k-mer tied with the running minimum can be dropped or written when it
 is not a window minimum; and the minimizer of the last window before an
 ambiguous base is never written.
@@ -147,7 +147,7 @@ def test_minimizers_with_tied_kmers(tmp_path):
 def test_minimizers_around_ambiguous_bases(tmp_path):
 	"""N and IUPAC codes end a k-mer run: no minimizer spans one, every minimizer is a window minimum of
 	its own run, and every window of every run has a minimizer, except the windows whose minimum is
-	that of the last window of a run followed by an ambiguous base (known-bugs/a-sketch-window-edges.md)."""
+	that of the last window of a run followed by an ambiguous base (minimap2 never writes that minimizer)."""
 	rng = H.Rng(51)
 	recs = []
 	for i in range(10):

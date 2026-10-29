@@ -117,7 +117,7 @@ def test_paf_copy_comment(synth, mixed, paf_runs):
 def test_paf_cs_md(synth, mixed, paf_runs, args, tag):
 	"""--cs and --cs=long in PAF imply alignment (the coordinates are those of -c, and cg:Z is absent
 	without -c); --MD with -c. The tag equals its recomputation from the genome. (--MD and --ds
-	without -c write nothing in PAF: known-bugs/d-md-ds-need-c-in-paf.md.)"""
+	without -c write nothing in PAF, which is not tested.)"""
 	m = mixed[0]
 	r = H.map_reads(synth.fasta, mixed[1], args).paf()
 	c = paf_runs["c"].paf()

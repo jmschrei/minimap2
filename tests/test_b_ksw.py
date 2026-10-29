@@ -1,4 +1,4 @@
-"""Area B: the ksw2 alignment kernels (ksw2_extz2_sse.c, ksw2_extd2_sse.c, ksw2_exts2_sse.c,
+"""The ksw2 alignment kernels (ksw2_extz2_sse.c, ksw2_extd2_sse.c, ksw2_exts2_sse.c,
 ksw2_ll_sse.c, ksw2_dispatch.c) through tests/c/drv_b_ksw.c, against a brute-force Gotoh DP written
 in the driver from the kernels' documented contract (ksw2.h). Every random case is generated from a
 fixed seed inside the driver."""
@@ -103,7 +103,7 @@ def test_narrow_band_edge(tmp_path):
 	"""Pins the current output of ksw_extz2/ksw_extd2 on 600 random pairs whose band w is |qlen - tlen|
 	plus 0 to 40, so the end cell lies on or near the band edge (global and extension, with end bonus,
 	Z-drop, KSW_EZ_RIGHT and KSW_EZ_APPROX_MAX; some with a 5-40 base indel). There the kernels can report
-	a score no alignment reaches and a CIGAR leaving the band (known-bugs/b-ksw2-banded-score.md), so the
+	a score no alignment reaches and a CIGAR leaving the band, so the
 	pin guards the exact results. Independently: every CIGAR is well formed; a global CIGAR not cut by
 	Z-drop covers both sequences and scores at most the unbanded optimum; an extension CIGAR ends at the
 	cell the kernel reports (the query end with reach_end, else the max cell)."""

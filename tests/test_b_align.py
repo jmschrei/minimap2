@@ -1,4 +1,4 @@
-"""Area B: base-level alignment (align.c, -c) and its options (-A -B -b -O -E --score-N -z -s
+"""Base-level alignment (align.c, -c) and its options (-A -B -b -O -E --score-N -z -s
 --end-bonus --max-clip-ratio --cap-sw-mem --min-dp-len --no-end-flt --end-seed-pen), the AS:i and
 ms:i tags, inversion rescue (tp:A:I) and chimeric reads (supplementary alignments, SA:Z).
 
@@ -355,6 +355,6 @@ def special(synth, tmp_path_factory):
 @pytest.mark.parametrize("name,preset,extra", [("special-map-ont.sam.gz", "map-ont", ["-a", "--cs", "-Y"]),
 	("special-map-hifi.paf.gz", "map-hifi", ["-c", "--cs"]), ("special-asm20.paf.gz", "asm20", ["-c"])])
 def test_special_reads_pinned(synth, special, name, preset, extra):
-	"""Pins the current output of base minimap2 on reads with inversions, a long deletion, a divergent
+	"""Pins the current output of minimap2 on reads with inversions, a long deletion, a divergent
 	stretch, an N run, chimeric pieces and genome features (@PG removed)."""
 	H.check_pinned("b/" + name, H.strip_pg(H.map_reads(synth.fasta, special, extra, preset=preset).stdout))

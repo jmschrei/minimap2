@@ -1,4 +1,4 @@
-/* Area B driver: the ksw2 alignment kernels (ksw2.h) against a brute-force
+/* C driver: the ksw2 alignment kernels (ksw2.h) against a brute-force
  * reference written here from their documented contract.
  *
  * ksw_extz2_sse    affine gaps, a k-long gap costs q+k*e
@@ -262,7 +262,7 @@ static void rand_params(int kind, int *a, int *b, int *q, int *e, int *q2, int *
  *********/
 
 /* args: kind(0 extz2, 1 extd2) seed n max_len. Global alignment without a band (w < 0, or a w no
- * cell exceeds; see band_deletion and known-bugs/b-ksw2-banded-score.md for narrow bands): the score
+ * cell exceeds; see band_deletion and band_edge for narrow bands): the score
  * equals the reference;
  * the CIGAR covers both sequences and scores exactly that; SCORE_ONLY, KSW_EZ_RIGHT, KSW_EZ_APPROX_MAX
  * (minimap2's gap filling) and KSW_EZ_REV_CIGAR give the same score; REV_CIGAR reverses the CIGAR. */
@@ -783,7 +783,7 @@ static int cigar_max_diag(int n_cigar, const uint32_t *cigar)
 
 /* args: seed n max_len out. Narrow bands: w is |qlen - tlen| plus 0 to 40, so the end cell of a global
  * alignment lies on or near the band edge, where the kernels may report a score the banded optimum
- * does not reach (known-bugs/b-ksw2-banded-score.md). What the kernels guarantee there: the global
+ * does not reach. What the kernels guarantee there: the global
  * CIGAR covers both sequences and is a valid alignment, which scores no more than the unbanded
  * optimum; an extension's CIGAR ends at the cell it reports. Every result (score, max and end cells,
  * flags, CIGAR) is written to out, one line per case, for a pin. */

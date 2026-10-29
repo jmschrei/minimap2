@@ -1,4 +1,4 @@
-/* Area A driver: the index API of minimap.h (mm_idx_reader_*, mm_idx_is_idx,
+/* C driver: the index API of minimap.h (mm_idx_reader_*, mm_idx_is_idx,
  * mm_idx_load/dump, mm_idx_str, mm_idx_build, mm_idx_stat, mm_idx_destroy,
  * mm_idx_index_name, mm_idx_name2id, mm_idx_getseq) and the internal index
  * functions behind it (mm_idx_init, mm_idx_gen, mm_idx_get,

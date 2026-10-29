@@ -1,4 +1,4 @@
-"""Area B: hit selection (hit.c): primary and secondary chains (-p -N -M --hard-mask-level
+"""Hit selection (hit.c): primary and secondary chains (-p -N -M --hard-mask-level
 --mask-len -P), mapping quality on unique and repetitive reads, ALT contigs (--alt --alt-drop) and
 tie breaking (--no-hash-name).
 
@@ -233,8 +233,8 @@ def test_alt_contigs(alt):
 
 @pytest.mark.pinned
 def test_secondaries_below_pri_ratio_pinned(tmp_path):
-	"""Pins the current output where base minimap2 writes a secondary below the -p ratio
-	(known-bugs/r1-secondary-below-pri-ratio.md; mm_select_sub keeps a secondary within 2k of its
+	"""Pins the current output where minimap2 writes a secondary below the -p ratio
+	(against minimap2.1's description of -p; mm_select_sub keeps a secondary within 2k of its
 	primary, and one on the opposite strand scoring above 0.8 * -g). Two cases, PAF with and without -c:
 	a 6 kbp read with an exact 5 kbp partial copy elsewhere, on the read's strand or reverse-complemented,
 	at -p 0.9; and a 600 bp read whose copy elsewhere has one substitution, so its chaining score is 16

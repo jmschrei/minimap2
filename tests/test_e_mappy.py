@@ -1,4 +1,4 @@
-"""mappy, the Python binding, built from the sources under test (area E).
+"""mappy, the Python binding, built from the sources under test.
 
 Expected values come from python/README.rst, the simulator's truth, the
 genome (cs, MD, NM, mlen and blen recomputed), hand-worked end-extension
@@ -8,8 +8,7 @@ Aligner argument mirrors a minimap2 option, so mappy's alignments must equal
 read name is passed to map()).
 
 python/README.rst documents mate 2 of a pair as having positions on the query;
-base mappy reports them on its reverse complement (known-bugs/
-e-mappy-mate2-query-coords.md), so the pair tests compare mate 2's query
+mappy reports them on its reverse complement, so the pair tests compare mate 2's query
 interval and cs only for hits that cover the whole mate.
 """
 
@@ -303,7 +302,7 @@ def test_alignments_against_truth_and_recomputed_fields(mappy, synth, default_al
 
 def test_cs_md_and_ds(mappy, synth, default_aligner, hifi_unique, hifi):
 	"""map(cs=True, MD=True, ds=True) returns all three, each computed on its own: cs equals the short-form cs
-	recomputed from the genome, MD the recomputed MD (in minimap2's form, see known-bugs/md-trailing-zero.md),
+	recomputed from the genome, MD the recomputed MD (in minimap2's form, without a final 0),
 	and ds is cs with its indel bases bracketed (removing the brackets gives cs). Without the arguments the
 	three are empty strings."""
 	g = synth.genome
@@ -326,7 +325,7 @@ def test_cs_md_and_ds(mappy, synth, default_aligner, hifi_unique, hifi):
 
 def test_cs_md_ds_match_the_command_line(mappy, synth, default_aligner, hifi):
 	"""cs, MD and ds equal the cs:Z, MD:Z and ds:Z of `minimap2 -c --no-hash-name` with --cs, --MD and --ds
-	(three runs: the command line writes only one of them per run, known-bugs/cs-and-md-together.md)."""
+	(three runs: the command line writes only one of them per run)."""
 	reads, fq = hifi
 	want = {}
 	for opt, tag in (("--cs", "cs"), ("--MD", "MD"), ("--ds", "ds")):
@@ -702,7 +701,7 @@ def test_pairs_seq2_and_read_num(mappy, synth, wd):
 	mate of pairs from unique sequence lands at its truth (within 3 bp) on opposite strands, and every
 	alignment's contig, reference interval, strand, MAPQ, primary flag, CIGAR, NM, mlen and blen equal the
 	command line's /1 and /2 PAF lines (query interval and cs for mate 2 only when the alignment covers the
-	whole mate; known-bugs/e-mappy-mate2-query-coords.md). Mates are 140-160 bp, so mappy's reverse
+	whole mate, since mappy reports mate 2's query interval on its reverse complement). Mates are 140-160 bp, so mappy's reverse
 	complement of mate 2 meets odd and even lengths."""
 	pairs = H.simulate_pairs(synth.genome, 30, seed=508, read_length=(140, 160), insert_mean=300, insert_sd=30, unique=True)
 	assert len(set(len(p.r2.seq) % 2 for p in pairs)) == 2

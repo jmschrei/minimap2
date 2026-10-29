@@ -1,4 +1,4 @@
-"""Area A: reading sequences (bseq.c) and the command line's input handling:
+"""Reading sequences (bseq.c) and the command line's input handling:
 FASTA and FASTQ, multi-line records, gzip, lowercase, U and IUPAC bases,
 several query files, stdin, empty files, empty and short sequences.
 
@@ -166,7 +166,7 @@ def test_empty_short_and_unmappable_queries(ref, tmp_path):
 	text = ">empty\n\n>short\nACGTACGTAC\n>allN\n%s\n>%s\n%s\n>\nGATTACAGATTACAGATTACAGATTACA\n" % ("N" * 500, n, s)
 	q = H.write_text(str(tmp_path / "q.fa"), text)
 	r = H.map_reads(ref.fasta, q, ["-a"])
-	sam = H.parse_sam(r.stdout, strict=False)  # strict parsing rejects the empty SEQ and QNAME (known-bugs/a-empty-records-in-sam.md)
+	sam = H.parse_sam(r.stdout, strict=False)  # strict parsing rejects the empty SEQ and QNAME minimap2 writes here
 	prim = [x for x in sam.records if not x.is_secondary and not x.is_supplementary]
 	assert [x.qname for x in prim] == ["empty", "short", "allN", n, ""]
 	assert [x.flag for x in prim if x.qname != n] == [4, 4, 4, 4]
@@ -198,7 +198,7 @@ def _read_driver(path, chunk, with_qual=1, with_comment=1, frag=0, fn=3, stdin=N
 def _check_batches(batches, records, chunk, frag=False):
 	"""The batches hold the records in order; in frag mode a batch never splits records whose names
 	differ only by a trailing /N (mates must be mapped together). Where a batch ends otherwise is not
-	checked: it does not change minimap2's output (-K), and a speed change may batch differently."""
+	checked: it does not change minimap2's output (-K), and a change to bseq.c may batch differently."""
 	assert [x for b in batches for x in b] == records
 	if frag:
 		stem = lambda n: n[:-2] if len(n) >= 3 and n[-2] == "/" and n[-1].isdigit() else n

@@ -1,4 +1,4 @@
-/* Area D driver: the libminimap2 API (mm_set_opt, mm_mapopt_init, mm_check_opt, the thread
+/* C driver: the libminimap2 API (mm_set_opt, mm_mapopt_init, mm_check_opt, the thread
  * buffers, mm_map, mm_map_file, mm_gen_cs/ds/MD), the writers of format.c, kalloc, kthread and
  * misc.c.
  *
@@ -6,7 +6,7 @@
  * mm_write_sam_hdr, mm_write_sam/sam2/sam3, mm_write_paf/paf3/paf4, kstring_t,
  * MM_DBG_NO_KALLOC, realtime, cputime, peakrss, mm_err_* (mmpriv.h); kalloc.h; kthread.h. The
  * long_cigar case builds an mm_reg1_t and its mm_extra_t by hand (both public structs of
- * minimap.h, fixed for the speed search). Checks are on documented results (output text, return
+ * minimap.h). Checks are on documented results (output text, return
  * values, memory contents), not on internal state.
  *
  * Cases printing alignments write them to stdout, one record per line, before the final
@@ -83,7 +83,7 @@ static void free_regs(int n_reg, mm_reg1_t *reg)
  * Macros: values the CLI tests map to options *
  **********************************************/
 
-/* args: none. Prints "name value" for the MM_F_* flags of area D; checks the CIGAR codes */
+/* args: none. Prints "name value" for the output and API MM_F_* flags; checks the CIGAR codes */
 static int case_macros(int argc, char *argv[])
 {
 	const char *bam_ops = "MIDNSHP=X"; /* SAM spec 4.2: BAM op codes 0..8 */

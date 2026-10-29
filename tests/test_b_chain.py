@@ -1,4 +1,4 @@
-"""Area B: chaining (lchain.c) and the chaining options (-m -n -g -r --no-long-join --rmq --rmq-inner
+"""Chaining (lchain.c) and the chaining options (-m -n -g -r --no-long-join --rmq --rmq-inner
 --max-chain-skip --max-chain-iter --chain-gap-scale --chain-skip-scale), the cm:i, s1:i and dv:f tags,
 and the sorting helpers of misc.c.
 

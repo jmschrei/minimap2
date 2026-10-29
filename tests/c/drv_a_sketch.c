@@ -1,4 +1,4 @@
-/* Area A driver: mm_sketch() (sketch.c) and the SDUST functions (sdust.c).
+/* C driver: mm_sketch() (sketch.c) and the SDUST functions (sdust.c).
  *
  * Internal API: mm_sketch() is declared in mmpriv.h and returns mm128_t
  * arrays (x = hash<<8 | span, y = rid<<32 | lastPos<<1 | strand, as

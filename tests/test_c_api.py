@@ -1,4 +1,4 @@
-"""Area C: the splice and short-read parts of the libminimap2 API through the
+"""The splice and short-read parts of the libminimap2 API through the
 C driver tests/c/drv_c_api.c: preset option values against minimap2.1,
 mm_mapopt_max_intron_len, the junction and splice-score readers
 (mm_idx_bed_read, mm_idx_bed_junc, mm_idx_spsc_read, mm_idx_spsc_read2,
@@ -160,8 +160,8 @@ def test_map_frag_api(synth, tmp_path):
 	r2 = [(p.name, p.r2.seq) for p in pairs + thru]
 	adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC"
 	other = {"A": "C", "C": "A", "G": "T", "T": "G"}
-	# six positions where base maps both mates: with -x sr, mate 2 of some read-through pairs is left
-	# unmapped although it aligns uniquely (base behaviour; see Rules)
+	# six positions where minimap2 maps both mates: with -x sr, mate 2 of some read-through pairs is left
+	# unmapped although it aligns uniquely (a defect, not tested)
 	starts = [3000, 4500, 6000, 7500, 12000, 10500]
 	assert all(g.is_unique("chr1", s - 30, s + 180, 20) for s in starts)
 	for i, st in enumerate(starts):

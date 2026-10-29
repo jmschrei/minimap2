@@ -1,4 +1,4 @@
-"""Helpers for the area D tests: output formats, the command line and the libminimap2 API.
+"""Helpers for the tests of output formats, the command line and the libminimap2 API (test_d_*.py).
 
 Contents:
 	mixed_reads           reads of every output kind (unique, low-complexity, repeat copies,

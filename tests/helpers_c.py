@@ -1,4 +1,4 @@
-"""Helpers for the area C tests (splice and short reads).
+"""Helpers for the splice and short-read tests (test_c_*.py).
 
 Hand-built loci whose correct alignment is known by construction:
 

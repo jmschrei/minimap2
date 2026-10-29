@@ -1,4 +1,4 @@
-"""Area A: --split-prefix (splitidx.c, mm_split_merge in map.c).
+"""--split-prefix (splitidx.c, mm_split_merge in map.c).
 
 minimap2.1: with a multi-part index (-I), minimap2 maps the queries against
 each part in turn; --split-prefix writes each part's hits to temporary files
@@ -7,7 +7,7 @@ sequence and one primary alignment per read. For reads from unique sequence
 the merged alignments equal those against a single-part index.
 
 Not tested: --split-prefix with two or more single-end query files aborts
-in base minimap2 (known-bugs/a-split-prefix-several-query-files.md).
+on an assertion in mm_hit_sort.
 """
 
 import os
@@ -139,7 +139,7 @@ def test_c_api_split_files(tmp_path):
 @pytest.mark.pinned
 def test_split_prefix_output_pin(synth, split_reads, tmp_path):
 	"""Pins the current output: the SAM records (SEQ and QUAL, copies of the input, replaced by '*') of
-	ONT-like reads mapped with a two-part index (-I 60k) and --split-prefix, the merge step a speed change
+	ONT-like reads mapped with a two-part index (-I 60k) and --split-prefix, the merge step a change
 	to map.c could alter."""
 	r = H.map_reads(synth.fasta, split_reads["ont"], ["-a", "-I", "60k", "--split-prefix", str(tmp_path / "p")])
 	body = []

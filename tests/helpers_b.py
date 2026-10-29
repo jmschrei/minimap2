@@ -1,4 +1,4 @@
-"""Helpers for the area B tests (seeding, chaining, alignment, hit selection).
+"""Helpers for the seeding, chaining, alignment and hit selection tests (test_b_*.py).
 
 Reference implementations written from minimap2's documentation and papers,
 not from its code paths, so tests can derive expected values independently:

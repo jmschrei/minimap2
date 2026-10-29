@@ -1,12 +1,12 @@
-"""Area A: low-complexity masking with SDUST (sdust.c), the `sdust` program of
+"""Low-complexity masking with SDUST (sdust.c), the `sdust` program of
 `make extra`, and -T (SDUST masking of query minimizers, map.c).
 
 Expected intervals come from helpers_a.sdust_reference, a direct
 implementation of the symmetric DUST definition (Morgulis et al. 2006): the
 union of perfect intervals of at most W bases, where a perfect interval
 scores above T/10 and no sub-interval scores higher. Ambiguous bases appear
-only at the ends of test sequences: base minimap2 carries the window state
-across an ambiguous base inside a sequence (known-bugs/a-sdust-state-across-n.md).
+only at the ends of test sequences: minimap2's SDUST carries the window state
+across an ambiguous base inside a sequence, which the definition does not.
 """
 
 import pytest
